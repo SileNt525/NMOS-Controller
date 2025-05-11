@@ -1,34 +1,46 @@
 import React, { useState } from 'react';
-import { Box, Typography, TextField, Button, Divider, FormControlLabel, Checkbox } from '@mui/material';
+import { useSelector, useDispatch } from 'react-redux';
+import { Box, Typography, TextField, Button, Divider, FormControlLabel, Checkbox, MenuItem, Select } from '@mui/material';
 
 const ConfigurationPanel = () => {
-  const [config, setConfig] = useState({
-    apiEndpoint: 'https://api.example.com',
-    pollingInterval: 5000,
-    enableNotifications: true,
-    theme: 'light',
-  });
+  const dispatch = useDispatch();
+  const config = useSelector(state => state.config);
+  const [localConfig, setLocalConfig] = useState({ ...config });
 
   const handleInputChange = (event) => {
     const { name, value } = event.target;
-    setConfig({
-      ...config,
+    setLocalConfig({
+      ...localConfig,
       [name]: value,
     });
   };
 
   const handleCheckboxChange = (event) => {
     const { name, checked } = event.target;
-    setConfig({
-      ...config,
+    setLocalConfig({
+      ...localConfig,
       [name]: checked,
     });
   };
 
+  const handleViewChange = (event) => {
+    const { name, value } = event.target;
+    setLocalConfig({
+      ...localConfig,
+      customViews: {
+        ...localConfig.customViews,
+        dashboard: {
+          ...localConfig.customViews.dashboard,
+          [name]: value,
+        }
+      }
+    });
+  };
+
   const handleSave = () => {
-    // 这里应调用API保存配置，暂时仅作演示
+    dispatch({ type: 'UPDATE_CONFIG', payload: localConfig });
     alert('配置已保存');
-    console.log('当前配置:', config);
+    console.log('当前配置:', localConfig);
   };
 
   return (
@@ -87,10 +99,30 @@ const ConfigurationPanel = () => {
         margin="normal"
         label="主题"
         name="theme"
-        value={config.theme}
+        value={localConfig.theme}
         onChange={handleInputChange}
         variant="outlined"
       />
+
+      <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+        自定义视图
+      </Typography>
+      <Typography variant="subtitle1" gutterBottom>
+        仪表板布局
+      </Typography>
+      <Select
+        fullWidth
+        margin="normal"
+        label="布局"
+        name="layout"
+        value={localConfig.customViews.dashboard.layout}
+        onChange={handleViewChange}
+        variant="outlined"
+      >
+        <MenuItem value="default">默认</MenuItem>
+        <MenuItem value="compact">紧凑</MenuItem>
+        <MenuItem value="detailed">详细</MenuItem>
+      </Select>
       
       <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
         <Button variant="contained" color="primary" onClick={handleSave}>

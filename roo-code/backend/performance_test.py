@@ -9,9 +9,9 @@ from datetime import datetime
 
 # 配置参数
 API_ENDPOINT = "http://localhost:8001"
-NUM_THREADS = 50
-REQUESTS_PER_THREAD = 100
-DELAY_BETWEEN_REQUESTS = 0.1  # 秒
+NUM_THREADS = 100
+REQUESTS_PER_THREAD = 200
+DELAY_BETWEEN_REQUESTS = 0.05  # 秒
 
 # 测试结果存储
 results = {
@@ -36,37 +36,53 @@ def make_request(thread_id):
     for i in range(REQUESTS_PER_THREAD):
         try:
             # 随机选择一个API端点进行测试
-            endpoints = ["/connect", "/connection_status/", "/bulk_connect"]
+            endpoints = [
+                "/connect", "/connection_status/", "/bulk_connect",
+                "/devices", "/events", "/audio_mapping"
+            ]
             endpoint = random.choice(endpoints)
             url = f"{API_ENDPOINT}{endpoint}"
             
             start_time = time.time()
-            if endpoint in ["/connect", "/bulk_connect"]:
+            if endpoint in ["/connect", "/bulk_connect", "/audio_mapping"]:
                 # 模拟连接请求数据
                 if endpoint == "/connect":
                     data = {
-                        "sender_id": f"sender_{random.randint(1, 100)}",
-                        "receiver_id": f"receiver_{random.randint(1, 100)}",
+                        "sender_id": f"sender_{random.randint(1, 500)}",
+                        "receiver_id": f"receiver_{random.randint(1, 500)}",
                         "transport_params": {"param1": "value1"},
                         "activation_mode": random.choice(["activate_immediate", "activate_scheduled_absolute"]),
                         "activation_time": "2025-05-12T12:00:00Z" if random.random() > 0.5 else None
                     }
                     response = requests.post(url, json=data, timeout=5)
-                else:  # bulk_connect
+                elif endpoint == "/bulk_connect":
                     data = {
                         "connections": [
                             {
-                                "sender_id": f"sender_{random.randint(1, 100)}",
-                                "receiver_id": f"receiver_{random.randint(1, 100)}",
+                                "sender_id": f"sender_{random.randint(1, 500)}",
+                                "receiver_id": f"receiver_{random.randint(1, 500)}",
                                 "transport_params": {"param1": "value1"},
                                 "activation_mode": random.choice(["activate_immediate", "activate_scheduled_absolute"]),
                                 "activation_time": "2025-05-12T12:00:00Z" if random.random() > 0.5 else None
-                            } for _ in range(5)
+                            } for _ in range(random.randint(5, 20))
                         ]
                     }
                     response = requests.post(url, json=data, timeout=5)
+                else:  # audio_mapping
+                    data = {
+                        "device_id": f"device_{random.randint(1, 500)}",
+                        "mapping": [
+                            {"input_channel": random.randint(1, 16), "output_channel": random.randint(1, 16)}
+                            for _ in range(random.randint(1, 5))
+                        ]
+                    }
+                    response = requests.post(url, json=data, timeout=5)
+            elif endpoint == "/devices":
+                response = requests.get(url, timeout=5)
+            elif endpoint == "/events":
+                response = requests.get(url + f"?device_id=device_{random.randint(1, 500)}", timeout=5)
             else:
-                response = requests.get(url + f"receiver_{random.randint(1, 100)}", timeout=5)
+                response = requests.get(url + f"receiver_{random.randint(1, 500)}", timeout=5)
             end_time = time.time()
             
             response_time = end_time - start_time
