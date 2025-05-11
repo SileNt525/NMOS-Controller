@@ -1,0 +1,178 @@
+version: '3.8'
+
+services:
+  registry_service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python nmos_registry_service/main.py
+    ports:
+      - "8000:8000"
+    environment:
+      - LOG_LEVEL=info
+      - API_PORT=8000
+      - SERVICE_NAME=nmos_registry_service
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nmos_db
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nmos-network
+
+  connection_service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python connection_management_service/main.py
+    ports:
+      - "8001:8001"
+    environment:
+      - LOG_LEVEL=info
+      - API_PORT=8001
+      - SERVICE_NAME=connection_management_service
+      - REGISTRY_SERVICE_URL=http://registry_service:8000
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nmos_db
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - registry_service
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nmos-network
+
+  event_service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python event_handling_service/main.py
+    ports:
+      - "8002:8002"
+    environment:
+      - LOG_LEVEL=info
+      - API_PORT=8002
+      - SERVICE_NAME=event_handling_service
+      - REGISTRY_SERVICE_URL=http://registry_service:8000
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nmos_db
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - registry_service
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nmos-network
+
+  audio_mapping_service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python audio_mapping_service/main.py
+    ports:
+      - "8003:8003"
+    environment:
+      - LOG_LEVEL=info
+      - API_PORT=8003
+      - SERVICE_NAME=audio_mapping_service
+      - REGISTRY_SERVICE_URL=http://registry_service:8000
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nmos_db
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - registry_service
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nmos-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_BASE_URL=http://registry_service:8000/api
+      - REACT_APP_WEBSOCKET_URL=ws://event_service:8002/ws
+    volumes:
+      - ./frontend:/app
+    depends_on:
+      - registry_service
+      - connection_service
+      - event_service
+      - audio_mapping_service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nmos-network
+
+  postgres:
+    image: postgres:13
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=nmos_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/audio_mapping.sql:/docker-entrypoint-initdb.d/audio_mapping.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nmos-network
+
+  redis:
+    image: redis:6
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nmos-network
+
+networks:
+  nmos-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
