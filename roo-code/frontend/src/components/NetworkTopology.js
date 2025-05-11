@@ -195,6 +195,11 @@ const NetworkTopology = () => {
           <option value="unconnected">未连接</option>
         </select>
       </div>
+<div style={{ position: 'absolute', bottom: 10, right: 10, backgroundColor: 'rgba(255, 255, 255, 0.8)', padding: '10px', borderRadius: '5px' }}>
+        <Typography variant="body2">连接状态统计:</Typography>
+        <Typography variant="body2" color="text.primary">已连接节点: {data.nodes.filter(node => data.links.some(link => link.source.id === node.id || link.target.id === node.id)).length}</Typography>
+        <Typography variant="body2" color="text.primary">未连接节点: {data.nodes.filter(node => !data.links.some(link => link.source.id === node.id || link.target.id === node.id)).length}</Typography>
+      </div>
     </Box>
   );
 };
