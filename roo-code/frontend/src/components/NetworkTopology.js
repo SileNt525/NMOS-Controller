@@ -4,6 +4,9 @@ import { Box } from '@mui/material';
 
 const NetworkTopology = () => {
   const svgRef = useRef(null);
+  const [data, setData] = React.useState({ nodes: [], links: [] });
+  const [layout, setLayout] = React.useState('force');
+  const [filter, setFilter] = React.useState({ type: 'all', connected: 'all' });
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -13,26 +16,58 @@ const NetworkTopology = () => {
     const height = svg.node().parentElement.clientHeight;
 
     // 从API获取数据
-    const [data, setData] = React.useState({ nodes: [], links: [] });
-    useEffect(() => {
-      const fetchData = async () => {
-        try {
-          const response = await fetch('/api/topology');
-          const result = await response.json();
-          setData(result);
-        } catch (error) {
-          console.error('Error fetching topology data:', error);
-        }
-      };
-      fetchData();
-    }, []);
+    const fetchData = async () => {
+      try {
+        const response = await fetch('/api/topology');
+        const result = await response.json();
+        setData(result);
+      } catch (error) {
+        console.error('Error fetching topology data:', error);
+      }
+    };
+    fetchData();
+  }, []);
 
-    // 创建力导向图
-    const simulation = d3.forceSimulation(data.nodes)
-      .force('link', d3.forceLink(data.links).id(d => d.id).distance(100))
-      .force('charge', d3.forceManyBody().strength(-800))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .on('tick', ticked);
+  useEffect(() => {
+    if (!svgRef.current || data.nodes.length === 0) return;
+
+    const svg = d3.select(svgRef.current);
+    const width = svg.node().parentElement.clientWidth;
+    const height = svg.node().parentElement.clientHeight;
+
+    // 清除之前的绘制
+    svg.selectAll('g').remove();
+
+    // 应用过滤
+    const filteredNodes = data.nodes.filter(node => {
+      if (filter.type !== 'all' && !node.id.startsWith(filter.type)) return false;
+      if (filter.connected === 'connected') {
+        return data.links.some(link => link.source.id === node.id || link.target.id === node.id);
+      } else if (filter.connected === 'unconnected') {
+        return !data.links.some(link => link.source.id === node.id || link.target.id === node.id);
+      }
+      return true;
+    });
+
+    const filteredLinks = data.links.filter(link => {
+      return filteredNodes.some(node => node.id === link.source.id) && filteredNodes.some(node => node.id === link.target.id);
+    });
+
+    // 根据布局类型创建不同的模拟
+    let simulation;
+    if (layout === 'force') {
+      simulation = d3.forceSimulation(filteredNodes)
+        .force('link', d3.forceLink(filteredLinks).id(d => d.id).distance(100))
+        .force('charge', d3.forceManyBody().strength(-800))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .on('tick', ticked);
+    } else if (layout === 'hierarchy') {
+      // 层次结构布局
+      const root = d3.hierarchy({ id: 'root', children: filteredNodes.map(node => ({ ...node, children: [] })) });
+      const treeLayout = d3.tree().size([width, height - 50]);
+      treeLayout(root);
+      simulation = null;
+    }
 
     // 绘制连线
     const link = svg.append('g')
@@ -145,6 +180,20 @@ const NetworkTopology = () => {
       <div style={{ position: 'absolute', top: 10, right: 10 }}>
         <button onClick={() => svg.call(d3.zoom().scaleBy(1.2))}>放大</button>
         <button onClick={() => svg.call(d3.zoom().scaleBy(0.8))}>缩小</button>
+        <select value={layout} onChange={e => setLayout(e.target.value)}>
+          <option value="force">力导向图</option>
+          <option value="hierarchy">层次结构图</option>
+        </select>
+        <select value={filter.type} onChange={e => setFilter({ ...filter, type: e.target.value })}>
+          <option value="all">所有类型</option>
+          <option value="Node">节点</option>
+          <option value="Device">设备</option>
+        </select>
+        <select value={filter.connected} onChange={e => setFilter({ ...filter, connected: e.target.value })}>
+          <option value="all">所有连接状态</option>
+          <option value="connected">已连接</option>
+          <option value="unconnected">未连接</option>
+        </select>
       </div>
     </Box>
   );

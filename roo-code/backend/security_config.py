@@ -96,3 +96,28 @@ ENCRYPTION = {
     "key_management": "local",  # 可以是 'local', 'kms', 等
     "key_rotation_period": "90 days"
 }
+
+# TLS配置，符合AMWA BCP-003-01标准
+TLS_CONFIG = {
+    "enabled": True,
+    "certificate_path": "/path/to/certificate.pem",
+    "key_path": "/path/to/privatekey.pem",
+    "cipher_suites": [
+        "TLS_AES_256_GCM_SHA384",
+        "TLS_AES_128_GCM_SHA256",
+        "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+        "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+    ],
+    "minimum_version": "TLSv1.2",
+    "hsts_enabled": True,
+    "hsts_max_age": 31536000  # 1年
+}
+
+# 渗透测试配置
+PENETRATION_TESTING = {
+    "enabled": False,  # 默认为禁用，需手动启用
+    "script_path": "security_tests/penetration_test.py",
+    "schedule": "monthly",
+    "report_path": "security_reports/penetration_test_report_{date}.json",
+    "notification_emails": ["security@company.com"]
+}

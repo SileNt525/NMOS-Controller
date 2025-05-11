@@ -14,21 +14,62 @@ export default function Dashboard() {
     // 在实际应用中，这里会调用API获取数据
   }, [dispatch]);
 
+  const [searchTerm, setSearchTerm] = React.useState('');
+  const [filterType, setFilterType] = React.useState('all');
+  const [filterConnected, setFilterConnected] = React.useState('all');
+
+  const filteredDevices = devices.filter(device => {
+    if (searchTerm) {
+      const searchLower = searchTerm.toLowerCase();
+      if (!device.id.toLowerCase().includes(searchLower) && !device.name.toLowerCase().includes(searchLower)) {
+        return false;
+      }
+    }
+    if (filterType !== 'all' && !device.id.startsWith(filterType)) {
+      return false;
+    }
+    if (filterConnected === 'connected') {
+      return connections.some(conn => conn.source.id === device.id || conn.target.id === device.id);
+    } else if (filterConnected === 'unconnected') {
+      return !connections.some(conn => conn.source.id === device.id || conn.target.id === device.id);
+    }
+    return true;
+  });
+
   return (
     <Box sx={{ flexGrow: 1, padding: 3 }}>
       <Typography variant="h4" gutterBottom>
         仪表盘
       </Typography>
+      <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
+        <input
+          type="text"
+          placeholder="搜索设备..."
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          style={{ padding: '8px', width: '200px' }}
+        />
+        <select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ padding: '8px' }}>
+          <option value="all">所有类型</option>
+          <option value="Node">节点</option>
+          <option value="Device">设备</option>
+        </select>
+        <select value={filterConnected} onChange={e => setFilterConnected(e.target.value)} style={{ padding: '8px' }}>
+          <option value="all">所有连接状态</option>
+          <option value="connected">已连接</option>
+          <option value="unconnected">未连接</option>
+        </select>
+      </Box>
       <Grid container spacing={3}>
         <Grid item xs={12} sm={6}>
           <Card>
             <CardHeader title="设备概览" />
             <CardContent>
               <Typography variant="h5" component="div">
-                {devices.length}
+                {filteredDevices.length} / {devices.length}
               </Typography>
               <Typography sx={{ mb: 1.5 }} color="text.secondary">
-                已发现的NMOS设备
+                已发现的NMOS设备 (过滤后 / 总计)
               </Typography>
             </CardContent>
           </Card>
