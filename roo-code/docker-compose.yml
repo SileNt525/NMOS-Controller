@@ -1,24 +1,61 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:13
+    container_name: nmos_postgres_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nmos_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nmos_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-nmos_controller_db}
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nmos_user} -d ${POSTGRES_DB:-nmos_controller_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nmos-network
+
+  redis:
+    image: redis:6-alpine
+    container_name: nmos_redis_cache
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nmos-network
+
   registry_service:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    command: python nmos_registry_service/main.py
+      dockerfile: Dockerfile # 明确指定
+    container_name: nmos_registry_service
+    command: uvicorn nmos_registry_service.main:app --host 0.0.0.0 --port ${API_PORT:-8000} --reload
+    environment:
+      - API_PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NMOS_EXTERNAL_REGISTRY_URL=${NMOS_EXTERNAL_REGISTRY_URL:-http://mock_registry_placeholder:80/x-nmos/query/v1.3} # 提醒用户配置
     ports:
       - "8000:8000"
-    environment:
-      - LOG_LEVEL=info
-      - API_PORT=8000
-      - SERVICE_NAME=nmos_registry_service
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nmos_db
-      - REDIS_URL=redis://redis:6379/0
     volumes:
-      - ./backend:/app
+      - ./backend:/app # 开发: 代码热重载
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -30,23 +67,20 @@ services:
   connection_service:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    command: python connection_management_service/main.py
+      dockerfile: Dockerfile # 明确指定
+    container_name: nmos_connection_service
+    command: uvicorn connection_management_service.main:app --host 0.0.0.0 --port ${API_PORT:-8001} --reload
+    environment:
+      - API_PORT=8001
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - REGISTRY_SERVICE_URL=http://registry_service:8000
     ports:
       - "8001:8001"
-    environment:
-      - LOG_LEVEL=info
-      - API_PORT=8001
-      - SERVICE_NAME=connection_management_service
-      - REGISTRY_SERVICE_URL=http://registry_service:8000
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nmos_db
-      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./backend:/app
     depends_on:
-      - registry_service
-      - postgres
-      - redis
+      registry_service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
@@ -58,23 +92,24 @@ services:
   event_service:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    command: python event_handling_service/main.py
+      dockerfile: Dockerfile # 明确指定
+    container_name: nmos_event_service
+    command: uvicorn event_handling_service.main:app --host 0.0.0.0 --port ${API_PORT:-8002} --reload
+    environment:
+      - API_PORT=8002
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - REGISTRY_SERVICE_URL=http://registry_service:8000
+      - CONNECTION_SERVICE_URL=http://connection_service:8001
+      - EVENT_RULES_INI_PATH=/app/event_rules.ini
     ports:
       - "8002:8002"
-    environment:
-      - LOG_LEVEL=info
-      - API_PORT=8002
-      - SERVICE_NAME=event_handling_service
-      - REGISTRY_SERVICE_URL=http://registry_service:8000
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nmos_db
-      - REDIS_URL=redis://redis:6379/0
     volumes:
-      - ./backend:/app
+      - ./backend:/app # 这使得 ./backend/event_rules.ini 在容器中可见为 /app/event_rules.ini
     depends_on:
-      - registry_service
-      - postgres
-      - redis
+      registry_service:
+        condition: service_healthy
+      connection_service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
@@ -86,23 +121,20 @@ services:
   audio_mapping_service:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    command: python audio_mapping_service/main.py
+      dockerfile: Dockerfile # 明确指定
+    container_name: nmos_audio_mapping_service
+    command: uvicorn audio_mapping_service.main:app --host 0.0.0.0 --port ${API_PORT:-8003} --reload
+    environment:
+      - API_PORT=8003
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - REGISTRY_SERVICE_URL=http://registry_service:8000
     ports:
       - "8003:8003"
-    environment:
-      - LOG_LEVEL=info
-      - API_PORT=8003
-      - SERVICE_NAME=audio_mapping_service
-      - REGISTRY_SERVICE_URL=http://registry_service:8000
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nmos_db
-      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./backend:/app
     depends_on:
-      - registry_service
-      - postgres
-      - redis
+      registry_service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -114,65 +146,41 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile # 使用我们为生产构建创建的 Dockerfile
+    container_name: nmos_frontend_app
     ports:
-      - "3000:3000"
+      - "3000:80" # 将主机的 3000 端口映射到容器内 Nginx 的 80 端口
     environment:
-      - REACT_APP_API_BASE_URL=http://registry_service:8000/api
+      # 这些环境变量在构建时由 React 读取 (通过 process.env.REACT_APP_*)
+      # 对于 Nginx 服务，这些运行时环境变量通常不会直接影响已构建的静态文件。
+      # 但保留它们以与 Dockerfile 构建过程中的期望一致。
+      - REACT_APP_REGISTRY_API_URL=http://registry_service:8000
+      - REACT_APP_CONNECTION_API_URL=http://connection_service:8001
+      - REACT_APP_EVENT_API_URL=http://event_service:8002
+      - REACT_APP_AUDIO_MAPPING_API_URL=http://audio_mapping_service:8003
       - REACT_APP_WEBSOCKET_URL=ws://event_service:8002/ws
-    volumes:
-      - ./frontend:/app
+    # 对于生产构建的 Nginx 服务，通常不需要挂载本地源代码卷。
+    # 如果需要进行快速的前端更改并希望 Nginx 提供服务（而不是用开发服务器），
+    # 你可能需要重新构建前端镜像 (docker-compose build frontend) 并重启服务。
+    # volumes:
+    #   - ./frontend/build:/usr/share/nginx/html # 也可以考虑直接挂载构建好的文件，但这不常用
     depends_on:
-      - registry_service
+      - registry_service # 确保后端 API 可用，尽管前端是静态文件
       - connection_service
       - event_service
       - audio_mapping_service
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "curl", "-f", "http://localhost:80"] # 检查容器内的 Nginx 是否在 80 端口响应
       interval: 30s
       timeout: 10s
       retries: 3
     networks:
       - nmos-network
 
-  postgres:
-    image: postgres:13
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=nmos_db
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./database/audio_mapping.sql:/docker-entrypoint-initdb.d/audio_mapping.sql
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - nmos-network
-
-  redis:
-    image: redis:6
-    volumes:
-      - redis-data:/data
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - nmos-network
+volumes:
+  postgres_data:
+  redis_data:
 
 networks:
   nmos-network:
     driver: bridge
-
-volumes:
-  postgres-data:
-  redis-data:
