@@ -109,29 +109,27 @@ export const fetchAllNmosResources = async () => {
     //   }
     // }
 
+    // 对获取到的资源进行版本适配
+    for (const type in results) {
+      if (results[type] && Array.isArray(results[type])) {
+        results[type].forEach(resource => {
+          if (type === 'nodes') {
+            resource.attached_network_device = resource.attached_network_device || null;
+            resource.authorization = resource.authorization || false;
+          } else if (type === 'devices') {
+            resource.authorization = resource.authorization || false;
+          } else if (type === 'sources' || type === 'flows') {
+            resource.event_type = resource.event_type || null;
+          }
+        });
+      }
+    }
+  
     return results; // 返回一个包含各类资源数组的对象
   } catch (error) {
     console.error('获取 NMOS 资源失败:', error.response ? error.response.data : error.message);
     throw error;
   }
-
-  // 对获取到的资源进行版本适配
-  for (const type in results) {
-    if (results[type] && Array.isArray(results[type])) {
-      results[type].forEach(resource => {
-        if (type === 'nodes') {
-          resource.attached_network_device = resource.attached_network_device || null;
-          resource.authorization = resource.authorization || false;
-        } else if (type === 'devices') {
-          resource.authorization = resource.authorization || false;
-        } else if (type === 'sources' || type === 'flows') {
-          resource.event_type = resource.event_type || null;
-        }
-      });
-    }
-  }
-
-  return results; // 返回一个包含各类资源数组的对象
 };
 
 // 如果需要单独获取 Nodes, Devices 等，可以从 fetchAllNmosResources 的结果中筛选，
