@@ -43,7 +43,11 @@ const ConfigurationPanel = () => {
     try {
       if (localConfig.nmosRegisterAddress && localConfig.nmosRegisterPort) {
         const response = await configureRegistry(localConfig.nmosRegisterAddress, localConfig.nmosRegisterPort);
-        alert('配置已保存，包括NMOS Register设置');
+        if (response && response.success) {
+          alert('配置已保存，包括NMOS Register设置');
+        } else {
+          alert('配置已保存，但NMOS Register设置失败');
+        }
         console.log('NMOS Register配置响应:', response);
       } else {
         alert('配置已保存');
@@ -70,7 +74,7 @@ const ConfigurationPanel = () => {
         margin="normal"
         label="API 端点"
         name="apiEndpoint"
-        value={config.apiEndpoint}
+        value={localConfig.apiEndpoint || ''}
         onChange={handleInputChange}
         variant="outlined"
       />
@@ -107,7 +111,7 @@ const ConfigurationPanel = () => {
         label="轮询间隔 (毫秒)"
         name="pollingInterval"
         type="number"
-        value={config.pollingInterval}
+        value={localConfig.pollingInterval || ''}
         onChange={handleInputChange}
         variant="outlined"
       />
@@ -118,7 +122,7 @@ const ConfigurationPanel = () => {
       <FormControlLabel
         control={
           <Checkbox
-            checked={config.enableNotifications}
+            checked={localConfig.enableNotifications || false}
             onChange={handleCheckboxChange}
             name="enableNotifications"
           />
