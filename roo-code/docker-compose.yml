@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:13
@@ -42,7 +40,7 @@ services:
     ports:
       - "8000:8000" # Query API port
     environment:
-      - DATABASE_URL=postgresql://user:password@db:5432/nmos
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-nmos_user}:${POSTGRES_PASSWORD:-nmos_pass}@postgres:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-nmos_controller_db}
       - REDIS_HOST=redis
       - NODE_ID_PREFIX=reg_node_
       - PYTHONUNBUFFERED=1 # For seeing logs immediately
@@ -51,7 +49,7 @@ services:
       - ./backend/nmos_registry_service:/app
       - ./backend/event_rules.ini:/app/event_rules.ini # Mount the rules file
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_started
