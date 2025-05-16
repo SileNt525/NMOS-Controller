@@ -7,10 +7,11 @@ import logging
 import json
 import requests
 import os
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional # 新增 Optional
+from .. import nmos_registry_service # 导入注册服务，以便访问 get_current_user
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -105,7 +106,7 @@ def find_is08_control_hrefs_for_device(device_resource: Dict[str, Any]) -> List[
 
 
 @app.get("/is08-devices", response_model=List[DeviceInfo], summary="List IS-08 capable devices")
-async def get_is08_capable_devices():
+async def get_is08_capable_devices(current_user_data: dict = Depends(nmos_registry_service.main.get_current_user)):
     if not REGISTRY_SERVICE_URL:
         raise HTTPException(status_code=503, detail="注册服务URL未配置，无法获取设备列表。")
 
@@ -153,7 +154,7 @@ async def get_is08_capable_devices():
         raise HTTPException(status_code=500, detail=f"获取IS-08设备列表时发生未知错误: {str(e)}")
 
 @app.post("/perform-operation", summary="Perform an IS-08 audio mapping operation")
-async def perform_audio_mapping(request: AudioMappingRequest):
+async def perform_audio_mapping(request: AudioMappingRequest, current_user_data: dict = Depends(nmos_registry_service.main.get_current_user)):
     logger.info(f"收到音频映射请求: 设备 ID '{request.device_id}', 操作 '{request.operation}', 参数 '{request.params}'")
 
     if not REGISTRY_SERVICE_URL:

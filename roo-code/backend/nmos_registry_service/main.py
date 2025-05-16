@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field # 新增 Field
 import requests
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
 import websocket
 import json
 import threading
@@ -72,19 +74,37 @@ class UserPasswordChange(BaseModel):
     current_password: str
     new_password: str
 
-# 简单的基于用户名/密码的认证（用于演示，实际应使用更安全的token机制）
-# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token") # 如果使用token
+# JWT认证配置
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-# 假设我们有一个函数来获取当前登录用户 (这里简化，实际应用需要完整认证流程)
-async def get_current_user(username: str = "admin_user"): # 默认为 admin_user 用于测试
-    # 在真实应用中，这里会从token或session中解析用户信息
-    if username not in security_config.USERS:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return security_config.USERS[username]
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(datetime.timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(datetime.timezone.utc) + timedelta(minutes=security_config.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, security_config.SECRET_KEY, algorithm=security_config.ALGORITHM)
+    return encoded_jwt
+
+# 获取当前登录用户 (使用JWT token)
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, security_config.SECRET_KEY, algorithms=[security_config.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user = security_config.USERS.get(username)
+    if user is None:
+        raise credentials_exception
+    return user
 
 
 # --- Helper Functions (与之前相同，为简洁省略，但它们应该在这里) ---
@@ -139,7 +159,7 @@ def process_resource_update(resource_data: Dict):
         logger.warning(f"收到的资源格式不正确或缺少id/type: {str(resource_data)[:200]}")
         return False
     resource_id = resource_data["id"]
-    resource_type_singular = resource_data["type"] 
+    resource_type_singular = resource_data["type"]
     resource_type_plural = resource_type_singular + "s"
     if resource_type_plural not in nmos_resources:
         logger.warning(f"未知的资源类型复数形式: '{resource_type_plural}' (来自单数 '{resource_type_singular}')")
@@ -162,6 +182,24 @@ def process_resource_update(resource_data: Dict):
         logger.info(f"更新资源 {resource_type_plural}/{resource_id}")
     else:
         logger.info(f"新增资源 {resource_type_plural}/{resource_id}")
+    
+    # 版本适配逻辑：检查资源版本并处理字段差异
+    resource_version = resource_data.get("version", "")
+    if ":" in resource_version:
+        # 假设版本格式为 "seconds:nanoseconds" 表示 v1.3
+        logger.debug(f"处理资源 {resource_type_plural}/{resource_id}，版本 v1.3 检测到")
+    else:
+        # 假设其他格式或缺少版本字段可能为 v1.2 或更旧版本
+        logger.debug(f"处理资源 {resource_type_plural}/{resource_id}，版本 v1.2 或更旧版本检测到")
+        # 为 v1.2 版本添加缺失字段的默认值
+        if resource_type_singular == "node":
+            resource_data.setdefault("attached_network_device", None)
+            resource_data.setdefault("authorization", False)
+        elif resource_type_singular == "device":
+            resource_data.setdefault("authorization", False)
+        elif resource_type_singular in ["source", "flow"]:
+            resource_data.setdefault("event_type", None)
+    
     nmos_resources[resource_type_plural][resource_id] = resource_data
     known_resource_ids[resource_id] = resource_type_plural
     return True
@@ -238,7 +276,7 @@ def on_open(ws):
 
 # --- API Endpoints ---
 @app.post("/configure", response_model=ConfigureResponse)
-async def configure_registry(config: RegistryConfig):
+async def configure_registry(config: RegistryConfig, current_user_data: dict = Depends(get_current_user)):
     global registry_url
     old_url = registry_url
     registry_url = f"http://{config.registry_address}:{config.registry_port}"
@@ -269,25 +307,27 @@ async def change_password(payload: UserPasswordChange, current_user_data: dict =
 # 这里我们假设前端在调用 change-password 时能某种方式提供用户名
 # 或者，如果使用token，get_current_user 会从token中提取用户
 
-# 示例：如果需要一个登录端点来配合上面的 Depends(get_current_user)
-# @app.post("/token")
-# async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-#     user = security_config.USERS.get(form_data.username + "_user") # 假设用户名前缀匹配
-#     if not user or not security_config.verify_password(user["username"], form_data.password):
-#         raise HTTPException(
-#             status_code=status.HTTP_401_UNAUTHORIZED,
-#             detail="Incorrect username or password",
-#             headers={"WWW-Authenticate": "Bearer"},
-#         )
-#     # access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-#     # access_token = create_access_token(
-#     #     data={"sub": user["username"]}, expires_delta=access_token_expires
-#     # )
-#     # return {"access_token": access_token, "token_type": "bearer"}
-#     return {"message": f"User {user['username']} authenticated (simulated)"} # 简化
+# 登录端点以获取JWT token
+@app.post("/token")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    # 查找用户，这里假设 username 字段直接对应 USERS 字典的键
+    user = security_config.USERS.get(form_data.username)
+    if not user or not security_config.verify_password(form_data.username, form_data.password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 创建访问 token
+    access_token_expires = timedelta(minutes=security_config.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["username"]}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/discover", summary="Discover resources by querying the NMOS Registry", response_model=DiscoverResponse)
-async def discover_resources_api(): # Renamed to avoid conflict
+async def discover_resources_api(current_user_data: dict = Depends(get_current_user)): # Renamed to avoid conflict
     global nmos_resources, known_resource_ids
     if not registry_url:
         raise HTTPException(status_code=503, detail="NMOS 注册中心 URL 尚未配置。")
@@ -363,7 +403,7 @@ async def startup_event_handler():
         logger.info("NMOS 注册中心 URL 尚未配置。请通过 POST /configure 或设置 NMOS_EXTERNAL_REGISTRY_URL 环境变量进行配置。")
 
 @app.get("/resources", summary="Get current cached NMOS resources", response_model=ResourcesResponse)
-async def get_resources_api_endpoint(): # Renamed from get_resources_api to be more distinct
+async def get_resources_api_endpoint(current_user_data: dict = Depends(get_current_user)): # Renamed from get_resources_api to be more distinct
     output_resources = {}
     for resource_type_plural_key, resources_dict in nmos_resources.items():
         output_resources[resource_type_plural_key] = list(resources_dict.values())

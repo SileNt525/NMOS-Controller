@@ -1,5 +1,7 @@
 # 安全配置文件，遵循AMWA BCP-003标准并实现基于角色的访问控制（RBAC）
 import bcrypt
+import json
+import os
 
 # AMWA BCP-003 安全配置
 SECURITY_STANDARDS = {
@@ -55,23 +57,63 @@ ROLES = {
 def hash_password(password: str) -> bytes:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
-USERS = {
-    "admin_user": {
-        "username": "admin",
-        "password_hash": hash_password("admin_password"),  # 示例密码 admin_password
-        "role": "admin"
-    },
-    "operator_user": {
-        "username": "operator",
-        "password_hash": hash_password("operator_password"), # 示例密码 operator_password
-        "role": "operator"
-    },
-    "viewer_user": {
-        "username": "viewer",
-        "password_hash": hash_password("viewer_password"),   # 示例密码 viewer_password
-        "role": "viewer"
+USERS_FILE = "users.json"
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, 'r') as f:
+            try:
+                users_data = json.load(f)
+                # Convert password hashes from string (if stored as string) to bytes
+                for user_data in users_data.values():
+                    if 'password_hash' in user_data and isinstance(user_data['password_hash'], str):
+                        user_data['password_hash'] = user_data['password_hash'].encode('utf-8')
+                return users_data
+            except json.JSONDecodeError:
+                return {}
+    return {}
+
+def save_users(users_data):
+    # Convert password hashes from bytes to string for JSON serialization
+    serializable_users_data = {}
+    for username, user_data in users_data.items():
+        serializable_user_data = user_data.copy()
+        if 'password_hash' in serializable_user_data and isinstance(serializable_user_data['password_hash'], bytes):
+            serializable_user_data['password_hash'] = serializable_user_data['password_hash'].decode('utf-8')
+        serializable_users_data[username] = serializable_user_data
+
+    with open(USERS_FILE, 'w') as f:
+        json.dump(serializable_users_data, f, indent=4)
+
+# 用户和角色映射
+# 示例：使用 bcrypt 哈希密码
+# 在实际应用中，这些哈希值应该在用户创建时生成并安全存储
+def hash_password(password: str) -> bytes:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
+# Load users from file at startup
+USERS = load_users()
+
+# If no users exist in the file, initialize with default users and save
+if not USERS:
+    USERS = {
+        "admin_user": {
+            "username": "admin",
+            "password_hash": hash_password("admin_password"),  # 示例密码 admin_password
+            "role": "admin"
+        },
+        "operator_user": {
+            "username": "operator",
+            "password_hash": hash_password("operator_password"), # 示例密码 operator_password
+            "role": "operator"
+        },
+        "viewer_user": {
+            "username": "viewer",
+            "password_hash": hash_password("viewer_password"),   # 示例密码 viewer_password
+            "role": "viewer"
+        }
     }
-}
+    save_users(USERS)
 
 # 权限检查函数
 def check_permission(username, permission):
@@ -101,8 +143,8 @@ def update_user_password(username, new_password: str) -> bool:
     if username not in USERS:
         return False
     USERS[username]["password_hash"] = hash_password(new_password)
-    # 在实际应用中，这里应该有持久化存储的逻辑，例如更新数据库
-    print(f"User {username}'s password updated in memory.") # 仅用于演示
+    save_users(USERS)
+    print(f"User {username}'s password updated and saved.") # 仅用于演示
     return True
 
 
@@ -139,6 +181,11 @@ TLS_CONFIG = {
 }
 
 # 渗透测试配置
+# JWT认证配置
+SECRET_KEY = "your-super-secret-key" # TODO: 在生产环境中，请使用更安全的密钥并从环境变量或安全存储中加载
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30 # Token过期时间（分钟）
+
 PENETRATION_TESTING = {
     "enabled": False,  # 默认为禁用，需手动启用
     "script_path": "security_tests/penetration_test.py",
