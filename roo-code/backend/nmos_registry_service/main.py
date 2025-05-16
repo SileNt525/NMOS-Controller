@@ -11,7 +11,7 @@ import asyncio
 import logging
 import os
 from typing import Dict, List, Any, Optional
-import security_config # 导入安全配置 
+import security_config  # 导入 security_config 模块
 
 app = FastAPI(title="NMOS Registry Service (IS-04)")
 
