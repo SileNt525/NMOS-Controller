@@ -373,7 +373,7 @@ async def discover_resources_api(current_user_data: dict = Depends(get_current_u
         raise HTTPException(status_code=e.response.status_code if e.response else 503, 
                             detail=f"资源发现失败 (HTTP Error): {e.response.text if e.response else str(e)}")
     except requests.exceptions.RequestException as e:
-        logger.error(f"请求注册服务 {query_api_resources_url} 发生网络错误: {e}")
+        logger.error(f"请求注册服务 {query_api_resources_url} 发生网络错误: {e}", exc_info=True)
         raise HTTPException(status_code=503, detail=f"资源发现失败 (Network Error): {str(e)}")
     except json.JSONDecodeError as e:
         logger.error(f"解析从 {query_api_resources_url} 获取的资源失败: {e}")

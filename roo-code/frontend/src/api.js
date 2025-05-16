@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // API 基础 URL - 将为每个服务分别定义
 // 注册服务 (IS-04 resources)
-const REGISTRY_SERVICE_URL = process.env.REACT_APP_REGISTRY_API_URL || 'http://localhost:8000';
+const REGISTRY_SERVICE_URL = process.env.REACT_APP_REGISTRY_API_URL || 'http://141.147.150.202:8010/x-nmos/query/v1.3';
 
 // 连接管理服务 (IS-05 connections)
 const CONNECTION_SERVICE_URL = process.env.REACT_APP_CONNECTION_API_URL || 'http://localhost:8001';
@@ -189,6 +189,10 @@ export const configureRegistry = async (address, port) => {
       registry_port: port
     };
     const response = await registryApiClient.post('/configure', payload);
+    // 更新 registryApiClient 的 baseURL 以使用新的地址和端口
+    const newBaseURL = `http://${address}:${port}/x-nmos/query/v1.3`;
+    registryApiClient.defaults.baseURL = newBaseURL;
+    console.log('已更新 registryApiClient 的 baseURL 为:', newBaseURL);
     return response.data;
   } catch (error) {
     console.error('配置NMOS注册中心失败:', error.response ? error.response.data : error.message);
