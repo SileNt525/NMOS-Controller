@@ -88,7 +88,7 @@ export default function Connections() {
         return;
     }
 
-    logger.info(`Attempting to update connection for Receiver: ${receiverIdToUpdate} to new Sender: ${senderToConnect}`);
+    console.info(`Attempting to update connection for Receiver: ${receiverIdToUpdate} to new Sender: ${senderToConnect}`);
 
 
     try {
