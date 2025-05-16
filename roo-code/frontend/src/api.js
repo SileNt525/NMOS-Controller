@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // API 基础 URL - 将为每个服务分别定义
 // 注册服务 (IS-04 resources)
-const REGISTRY_SERVICE_URL = process.env.REACT_APP_REGISTRY_API_URL || 'http://141.147.150.202:8010/x-nmos/query/v1.3';
+const REGISTRY_SERVICE_URL = process.env.REACT_APP_REGISTRY_API_URL || 'http://localhost:8000';
 
 // 连接管理服务 (IS-05 connections)
 const CONNECTION_SERVICE_URL = process.env.REACT_APP_CONNECTION_API_URL || 'http://localhost:8001';
