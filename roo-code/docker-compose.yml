@@ -133,6 +133,8 @@ services:
         condition: service_started
       audio_mapping_service:
         condition: service_started
+    networks:
+      - nmos-network
 
 volumes:
   postgres_data:
