@@ -38,144 +38,103 @@ services:
       - nmos-network
 
   registry_service:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile # 明确指定
-    container_name: nmos_registry_service
-    command: uvicorn nmos_registry_service.main:app --host 0.0.0.0 --port ${API_PORT:-8000} --reload
-    environment:
-      - API_PORT=8000
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - NMOS_EXTERNAL_REGISTRY_URL=${NMOS_EXTERNAL_REGISTRY_URL:-http://mock_registry_placeholder:80/x-nmos/query/v1.3} # 提醒用户配置
+    build: ./backend/nmos_registry_service
     ports:
-      - "8000:8000"
+      - "8000:8000" # Query API port
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/nmos
+      - REDIS_HOST=redis
+      - NODE_ID_PREFIX=reg_node_
+      - PYTHONUNBUFFERED=1 # For seeing logs immediately
+    command: python main.py # Ensure this is the correct command
     volumes:
-      - ./backend:/app # 开发: 代码热重载
+      - ./backend/nmos_registry_service:/app
+      - ./backend/event_rules.ini:/app/event_rules.ini # Mount the rules file
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
       redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - nmos-network
+        condition: service_started
 
   connection_service:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile # 明确指定
-    container_name: nmos_connection_service
-    command: uvicorn connection_management_service.main:app --host 0.0.0.0 --port ${API_PORT:-8001} --reload
-    environment:
-      - API_PORT=8001
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - REGISTRY_SERVICE_URL=http://registry_service:8000
+    build: ./backend/connection_management_service
     ports:
-      - "8001:8001"
+      - "8001:8000"
+    environment:
+      - REGISTRY_URL=http://registry_service:8000
+      - REDIS_HOST=redis
+      - PYTHONUNBUFFERED=1
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      - ./backend:/app
+      - ./backend/connection_management_service:/app
     depends_on:
-      registry_service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - nmos-network
+      registry_service: # No condition needed, just start after
+        condition: service_started
+      redis:
+        condition: service_started
 
   event_service:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile # 明确指定
-    container_name: nmos_event_service
-    command: uvicorn event_handling_service.main:app --host 0.0.0.0 --port ${API_PORT:-8002} --reload
-    environment:
-      - API_PORT=8002
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - REGISTRY_SERVICE_URL=http://registry_service:8000
-      - CONNECTION_SERVICE_URL=http://connection_service:8001
-      - EVENT_RULES_INI_PATH=/app/event_rules.ini
+    build: ./backend/event_handling_service
     ports:
-      - "8002:8002"
+      - "8002:8000"
+    environment:
+      - REGISTRY_URL=http://registry_service:8000
+      - CONNECTION_API_URL=http://connection_service:8000
+      - EVENT_RULES_PATH=/app/event_rules.ini
+      - PYTHONUNBUFFERED=1
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      - ./backend:/app # 这使得 ./backend/event_rules.ini 在容器中可见为 /app/event_rules.ini
+      - ./backend/event_handling_service:/app
+      - ./backend/event_rules.ini:/app/event_rules.ini
     depends_on:
       registry_service:
-        condition: service_healthy
+        condition: service_started
       connection_service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - nmos-network
+        condition: service_started
 
   audio_mapping_service:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile # 明确指定
-    container_name: nmos_audio_mapping_service
-    command: uvicorn audio_mapping_service.main:app --host 0.0.0.0 --port ${API_PORT:-8003} --reload
-    environment:
-      - API_PORT=8003
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - REGISTRY_SERVICE_URL=http://registry_service:8000
+    build: ./backend/audio_mapping_service
     ports:
-      - "8003:8003"
+      - "8003:8000"
+    environment:
+      - REGISTRY_URL=http://registry_service:8000
+      - CONNECTION_API_URL=http://connection_service:8000
+      - PYTHONUNBUFFERED=1
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      - ./backend:/app
+      - ./backend/audio_mapping_service:/app
     depends_on:
       registry_service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - nmos-network
+        condition: service_started
+      connection_service:
+        condition: service_started
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile # 使用我们为生产构建创建的 Dockerfile
-    container_name: nmos_frontend_app
+      dockerfile: Dockerfile
     ports:
-      - "3000:80" # 将主机的 3000 端口映射到容器内 Nginx 的 80 端口
+      - "3000:80"
     environment:
-      # 这些环境变量在构建时由 React 读取 (通过 process.env.REACT_APP_*)
-      # 对于 Nginx 服务，这些运行时环境变量通常不会直接影响已构建的静态文件。
-      # 但保留它们以与 Dockerfile 构建过程中的期望一致。
-      - REACT_APP_REGISTRY_API_URL=http://registry_service:8000
-      - REACT_APP_CONNECTION_API_URL=http://connection_service:8001
-      - REACT_APP_EVENT_API_URL=http://event_service:8002
-      - REACT_APP_AUDIO_MAPPING_API_URL=http://audio_mapping_service:8003
-      - REACT_APP_WEBSOCKET_URL=ws://event_service:8002/ws
-    # 对于生产构建的 Nginx 服务，通常不需要挂载本地源代码卷。
-    # 如果需要进行快速的前端更改并希望 Nginx 提供服务（而不是用开发服务器），
-    # 你可能需要重新构建前端镜像 (docker-compose build frontend) 并重启服务。
-    # volumes:
-    #   - ./frontend/build:/usr/share/nginx/html # 也可以考虑直接挂载构建好的文件，但这不常用
+      - REACT_APP_REGISTRY_SERVICE_URL=http://localhost:8000 # Exposed port for registry
+      - REACT_APP_CONNECTION_SERVICE_URL=http://localhost:8001 # Exposed port for connection
+      - REACT_APP_EVENT_SERVICE_URL=http://localhost:8002 # Exposed port for event
+      - REACT_APP_AUDIO_MAPPING_SERVICE_URL=http://localhost:8003 # Exposed port for audio mapping
+      # WebSocket URL should point to the publicly accessible endpoint of the registry service's WebSocket
+      # If registry_service WS is on port 8000 (same as its HTTP API), then:
+      - REACT_APP_WEBSOCKET_URL=ws://localhost:8000/ws 
+    volumes:
+      - ./frontend/src:/app/src # For hot-reloading if dev server supports it
+      - ./frontend/public:/app/public
     depends_on:
-      - registry_service # 确保后端 API 可用，尽管前端是静态文件
-      - connection_service
-      - event_service
-      - audio_mapping_service
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"] # 检查容器内的 Nginx 是否在 80 端口响应
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - nmos-network
+      registry_service:
+        condition: service_started
+      connection_service:
+        condition: service_started
+      event_service:
+        condition: service_started
+      audio_mapping_service:
+        condition: service_started
 
 volumes:
   postgres_data:

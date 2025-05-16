@@ -123,7 +123,21 @@ def process_resource_update(resource_data: Dict):
     if resource_type_plural not in nmos_resources:
         logger.warning(f"未知的资源类型复数形式: '{resource_type_plural}' (来自单数 '{resource_type_singular}')")
         return False
-    if resource_id in nmos_resources[resource_type_plural]:
+    existing_resource = nmos_resources[resource_type_plural].get(resource_id)
+    if existing_resource:
+        # 基本的版本比较逻辑 (假设版本是 <seconds>:<nanoseconds> 字符串)
+        # NMOS IS-04 v1.3 specifies version as "seconds:nanoseconds"
+        new_version_str = resource_data.get("version")
+        old_version_str = existing_resource.get("version")
+        if new_version_str and old_version_str:
+            try:
+                new_sec, new_nano = map(int, new_version_str.split(':'))
+                old_sec, old_nano = map(int, old_version_str.split(':'))
+                if new_sec < old_sec or (new_sec == old_sec and new_nano <= old_nano):
+                    logger.info(f"接收到的资源 {resource_type_plural}/{resource_id} 版本 ('{new_version_str}') 不比现有版本 ('{old_version_str}') 新，跳过更新。")
+                    return False # 不更新
+            except ValueError:
+                logger.warning(f"资源 {resource_type_plural}/{resource_id} 的版本号格式不正确 ('{new_version_str}' 或 '{old_version_str}')，将直接更新。")
         logger.info(f"更新资源 {resource_type_plural}/{resource_id}")
     else:
         logger.info(f"新增资源 {resource_type_plural}/{resource_id}")
@@ -191,6 +205,12 @@ def on_close(ws, close_status_code, close_msg):
     global ws_connection, ws_thread
     ws_connection = None 
     ws_thread = None
+    # 尝试自动重连，除非是显式关闭 (例如服务关闭时)
+    # 这里简单处理，总是尝试重连，除非 close_status_code 表明是正常关闭
+    # 实际应用中可能需要更复杂的逻辑来判断是否应该重连
+    if close_status_code != 1000: # 1000 表示正常关闭
+        logger.info(f"WebSocket 连接意外关闭 (code: {close_status_code})，将在5秒后尝试重连...")
+        threading.Timer(5.0, start_websocket_subscription).start()
 
 def on_open(ws):
     logger.info("WebSocket连接已建立")

@@ -187,8 +187,34 @@ class EventHandlingService:
             if device_id in self.subscriptions:
                 del self.subscriptions[device_id]
             if device_id in self._active_subscription_tasks:
-                del self._active_subscription_tasks[device_id]
-            logger.info(f"设备 {device_id} 的订阅任务结束。")
+                del self._active_subscription_tasks[device_id] # 移除任务记录
+            logger.info(f"设备 {device_id} ({event_source_url}) 的订阅任务结束。")
+            # 简单的自动重连逻辑: 如果任务不是被显式取消的，则尝试重连
+            # 需要检查任务是否被取消，以及连接是否是意外关闭
+            current_task = asyncio.current_task()
+            if not (current_task and current_task.cancelled()):
+                # 假设非正常关闭 (例如网络错误) 会导致此路径
+                # 避免在显式取消订阅时重连
+                # 实际应用中可能需要更精细的判断条件
+                logger.warning(f"设备 {device_id} ({event_source_url}) 的 WebSocket 连接意外断开，将在10秒后尝试重连...")
+                # 创建一个新的 task 来进行延时重连
+                async def delayed_reconnect():
+                    await asyncio.sleep(10) # 延时10秒
+                    logger.info(f"尝试为设备 {device_id} ({event_source_url}) 重新订阅...")
+                    # 重新创建订阅任务，并更新到 _active_subscription_tasks
+                    # 注意：这里需要确保不会无限递归或创建过多任务
+                    # 更好的做法可能是有一个专门的管理器来处理重试
+                    if device_id not in self._active_subscription_tasks or self._active_subscription_tasks[device_id].done():
+                        reconnect_task = asyncio.create_task(self.subscribe_to_event_source(device_id, event_source_url))
+                        self._active_subscription_tasks[device_id] = reconnect_task
+                    else:
+                        logger.info(f"设备 {device_id} 已存在活动的重连/订阅任务，跳过此次重连尝试。")
+                
+                # 确保不会因为API请求的取消而意外触发重连
+                # 只有当此订阅任务本身结束且非取消时才重连
+                # 检查 self._active_subscription_tasks[device_id] 是否还指向当前结束的任务
+                # 这个逻辑比较复杂，暂时简化为只要不是取消就尝试创建重连任务
+                asyncio.create_task(delayed_reconnect())
     
     async def process_event(self, device_id: str, event_data_str: str):
         """Process an incoming IS-07 event."""

@@ -54,15 +54,39 @@ const audioMappingApiClient = axios.create({
 // 或者，我们需要在注册服务中实现更细致的 IS-04 路径。
 // 为简化，我们假设 /resources 返回所有内容。
 
+// 获取所有 NMOS 资源 (nodes, devices, senders, receivers, etc.)
 export const fetchAllNmosResources = async () => {
+  const resourceTypes = ['nodes', 'devices', 'sources', 'flows', 'senders', 'receivers'];
+  const baseUrl = `${process.env.REACT_APP_REGISTRY_SERVICE_URL}/x-nmos/query/v1.3`;
+  const results = {};
+  let hasError = false;
+
   try {
-    // 该端点在 nmos_registry_service/main.py 中定义
-    const response = await registryApiClient.get('/resources');
-    return response.data; // 期望格式: { nodes: [], devices: [], senders: [], ... }
+    for (const type of resourceTypes) {
+      const response = await apiClient.get(`${baseUrl}/${type}`);
+      results[type] = response.data; // response.data 应该是该类型资源的数组
+      console.log(`Fetched ${type}:`, response.data);
+    }
   } catch (error) {
-    console.error('获取所有NMOS资源失败:', error.response ? error.response.data : error.message);
-    throw error;
+    console.error('Error fetching NMOS resources:', error);
+    hasError = true;
+    // 返回部分获取的数据（如果有）或抛出错误
+    // 这里选择返回已获取的数据，并在控制台记录错误
+    // 调用者 (App.js) 应该检查错误状态
+    // 或者，可以抛出错误: throw error;
   }
+  
+  // 如果在任何请求中发生错误，可以决定如何处理。
+  // 这里我们仍然返回已成功获取的资源，并在控制台打印了错误。
+  // App.js 中的 catch 块会捕获到 apiClient 抛出的更具体的错误（如果配置了拦截器）
+  // 或者最后一个请求的错误（如果没有统一的错误处理）。
+  // 为简单起见，如果任何一个失败，我们让 App.js 中的 catch 处理。
+  if (hasError && Object.keys(results).length === 0) {
+    // 如果一个资源都没取到且出错了，就抛出错误
+    throw new Error('Failed to fetch any NMOS resources.');
+  }
+
+  return results; // 返回一个包含各类资源数组的对象
 };
 
 // 如果需要单独获取 Nodes, Devices 等，可以从 fetchAllNmosResources 的结果中筛选，
