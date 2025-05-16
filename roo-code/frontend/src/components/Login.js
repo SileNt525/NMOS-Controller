@@ -61,6 +61,14 @@ const Login = ({ onLogin }) => {
           >
             登录
           </Button>
+          <Button
+            fullWidth
+            variant="outlined"
+            sx={{ mt: 1 }}
+            href="/change-password"
+          >
+            修改密码
+          </Button>
         </Box>
       </Box>
     </Container>

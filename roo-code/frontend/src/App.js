@@ -9,6 +9,7 @@ import AudioMapping from './components/AudioMapping';
 import NetworkTopology from './components/NetworkTopology';
 import ConfigurationPanel from './components/ConfigurationPanel';
 import Login from './components/Login';
+import ChangePassword from './components/ChangePassword';
 import Navbar from './components/Navbar';
 import { Container, Box } from '@mui/material'; // Box 可能用于布局
 import WebSocketClient from './websocket'; // 新增导入
@@ -122,6 +123,7 @@ function App() {
             <Route path="/audio-mapping" element={<AudioMapping />} />
             <Route path="/network-topology" element={<NetworkTopology />} />
             <Route path="/configuration" element={<ConfigurationPanel />} />
+            <Route path="/change-password" element={<ChangePassword />} />
             {/* 可以添加一个 404 页面 */}
             {/* <Route path="*" element={<NotFoundPage />} /> */}
           </Routes>

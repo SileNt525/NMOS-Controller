@@ -1,4 +1,5 @@
 # 安全配置文件，遵循AMWA BCP-003标准并实现基于角色的访问控制（RBAC）
+import bcrypt
 
 # AMWA BCP-003 安全配置
 SECURITY_STANDARDS = {
@@ -49,20 +50,25 @@ ROLES = {
 }
 
 # 用户和角色映射
+# 示例：使用 bcrypt 哈希密码
+# 在实际应用中，这些哈希值应该在用户创建时生成并安全存储
+def hash_password(password: str) -> bytes:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
 USERS = {
     "admin_user": {
         "username": "admin",
-        "password_hash": "hashed_password_here",  # 实际应用中应使用安全的哈希算法
+        "password_hash": hash_password("admin_password"),  # 示例密码 admin_password
         "role": "admin"
     },
     "operator_user": {
         "username": "operator",
-        "password_hash": "hashed_password_here",
+        "password_hash": hash_password("operator_password"), # 示例密码 operator_password
         "role": "operator"
     },
     "viewer_user": {
         "username": "viewer",
-        "password_hash": "hashed_password_here",
+        "password_hash": hash_password("viewer_password"),   # 示例密码 viewer_password
         "role": "viewer"
     }
 }
@@ -80,6 +86,25 @@ def check_permission(username, permission):
         return False
     
     return permission in ROLES[user_role]["permissions"]
+
+# 密码验证函数
+def verify_password(username, provided_password: str) -> bool:
+    if username not in USERS:
+        return False
+    stored_hash = USERS[username].get("password_hash")
+    if not stored_hash:
+        return False
+    return bcrypt.checkpw(provided_password.encode('utf-8'), stored_hash)
+
+# 更新用户密码函数
+def update_user_password(username, new_password: str) -> bool:
+    if username not in USERS:
+        return False
+    USERS[username]["password_hash"] = hash_password(new_password)
+    # 在实际应用中，这里应该有持久化存储的逻辑，例如更新数据库
+    print(f"User {username}'s password updated in memory.") # 仅用于演示
+    return True
+
 
 # 安全审计日志配置
 AUDIT_LOGGING = {

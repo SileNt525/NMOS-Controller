@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field # 新增 Field
 import requests
 import websocket
@@ -7,7 +8,8 @@ import threading
 import asyncio
 import logging
 import os
-from typing import Dict, List, Any, Optional 
+from typing import Dict, List, Any, Optional
+from .. import security_config # 导入安全配置 
 
 app = FastAPI(title="NMOS Registry Service (IS-04)")
 
@@ -59,11 +61,30 @@ class DiscoverResponse(BaseModel):
     resource_summary: Dict[str, int]
 
 class RegistryConfig(BaseModel):
-    registry_url: str
+    registry_address: str
+    registry_port: int
 
 class ConfigureResponse(BaseModel):
     message: str
     url: Optional[str] = None
+
+class UserPasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+# 简单的基于用户名/密码的认证（用于演示，实际应使用更安全的token机制）
+# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token") # 如果使用token
+
+# 假设我们有一个函数来获取当前登录用户 (这里简化，实际应用需要完整认证流程)
+async def get_current_user(username: str = "admin_user"): # 默认为 admin_user 用于测试
+    # 在真实应用中，这里会从token或session中解析用户信息
+    if username not in security_config.USERS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return security_config.USERS[username]
 
 
 # --- Helper Functions (与之前相同，为简洁省略，但它们应该在这里) ---
@@ -220,12 +241,50 @@ def on_open(ws):
 async def configure_registry(config: RegistryConfig):
     global registry_url
     old_url = registry_url
-    registry_url = config.registry_url
+    registry_url = f"http://{config.registry_address}:{config.registry_port}"
     logger.info(f"NMOS注册中心已配置为: {registry_url}")
     if old_url != registry_url or (ws_thread is None or not ws_thread.is_alive()):
         logger.info("检测到 registry_url 更改或 WebSocket 未运行，正在尝试（重新）启动 WebSocket。")
         start_websocket_subscription()
     return ConfigureResponse(message="注册中心配置成功", url=registry_url)
+
+@app.post("/users/change-password", summary="Change user password")
+async def change_password(payload: UserPasswordChange, current_user_data: dict = Depends(get_current_user)):
+    username = current_user_data.get("username")
+    if not username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username not found in token/session")
+
+    # 验证当前密码
+    if not security_config.verify_password(username, payload.current_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect current password")
+
+    # 更新密码
+    if security_config.update_user_password(username, payload.new_password):
+        return {"message": "Password updated successfully"}
+    else:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update password")
+
+# 模拟登录以获取用户身份 (用于演示，实际应用应有完整登录流程)
+# 如果前端已经有登录，并且可以传递用户名或用户ID，则不需要这个模拟登录
+# 这里我们假设前端在调用 change-password 时能某种方式提供用户名
+# 或者，如果使用token，get_current_user 会从token中提取用户
+
+# 示例：如果需要一个登录端点来配合上面的 Depends(get_current_user)
+# @app.post("/token")
+# async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+#     user = security_config.USERS.get(form_data.username + "_user") # 假设用户名前缀匹配
+#     if not user or not security_config.verify_password(user["username"], form_data.password):
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED,
+#             detail="Incorrect username or password",
+#             headers={"WWW-Authenticate": "Bearer"},
+#         )
+#     # access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+#     # access_token = create_access_token(
+#     #     data={"sub": user["username"]}, expires_delta=access_token_expires
+#     # )
+#     # return {"access_token": access_token, "token_type": "bearer"}
+#     return {"message": f"User {user['username']} authenticated (simulated)"} # 简化
 
 @app.get("/discover", summary="Discover resources by querying the NMOS Registry", response_model=DiscoverResponse)
 async def discover_resources_api(): # Renamed to avoid conflict

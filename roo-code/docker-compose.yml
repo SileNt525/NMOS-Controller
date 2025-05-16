@@ -36,7 +36,9 @@ services:
       - nmos-network
 
   registry_service:
-    build: ./backend/nmos_registry_service
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
       - "8000:8000" # Query API port
     environment:
@@ -55,7 +57,9 @@ services:
         condition: service_started
 
   connection_service:
-    build: ./backend/connection_management_service
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
       - "8001:8000"
     environment:
@@ -72,7 +76,9 @@ services:
         condition: service_started
 
   event_service:
-    build: ./backend/event_handling_service
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
       - "8002:8000"
     environment:
@@ -91,7 +97,9 @@ services:
         condition: service_started
 
   audio_mapping_service:
-    build: ./backend/audio_mapping_service
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
       - "8003:8000"
     environment:

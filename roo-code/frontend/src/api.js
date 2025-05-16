@@ -139,6 +139,21 @@ export const fetchReceivers = async () => {
 };
 
 
+// 配置NMOS注册中心
+export const configureRegistry = async (address, port) => {
+  try {
+    const payload = {
+      registry_address: address,
+      registry_port: port
+    };
+    const response = await registryApiClient.post('/configure', payload);
+    return response.data;
+  } catch (error) {
+    console.error('配置NMOS注册中心失败:', error.response ? error.response.data : error.message);
+    throw error;
+  }
+};
+ 
 // **连接管理服务 (NMOS Connection Management Service - IS-05 related)**
 
 // 执行IS-05连接管理 - 创建/更新单个连接

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
+import { configureRegistry } from '../api';
 import { Box, Typography, TextField, Button, Divider, FormControlLabel, Checkbox, MenuItem, Select } from '@mui/material';
 
 const ConfigurationPanel = () => {
@@ -37,10 +38,21 @@ const ConfigurationPanel = () => {
     });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     dispatch({ type: 'UPDATE_CONFIG', payload: localConfig });
-    alert('配置已保存');
-    console.log('当前配置:', localConfig);
+    try {
+      if (localConfig.nmosRegisterAddress && localConfig.nmosRegisterPort) {
+        const response = await configureRegistry(localConfig.nmosRegisterAddress, localConfig.nmosRegisterPort);
+        alert('配置已保存，包括NMOS Register设置');
+        console.log('NMOS Register配置响应:', response);
+      } else {
+        alert('配置已保存');
+      }
+      console.log('当前配置:', localConfig);
+    } catch (error) {
+      alert('保存配置时出错: ' + error.message);
+      console.error('保存配置时出错:', error);
+    }
   };
 
   return (
@@ -59,6 +71,29 @@ const ConfigurationPanel = () => {
         label="API 端点"
         name="apiEndpoint"
         value={config.apiEndpoint}
+        onChange={handleInputChange}
+        variant="outlined"
+      />
+      
+      <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+        NMOS Register 设置
+      </Typography>
+      <TextField
+        fullWidth
+        margin="normal"
+        label="NMOS Register 地址"
+        name="nmosRegisterAddress"
+        value={localConfig.nmosRegisterAddress || ''}
+        onChange={handleInputChange}
+        variant="outlined"
+      />
+      <TextField
+        fullWidth
+        margin="normal"
+        label="NMOS Register 端口号"
+        name="nmosRegisterPort"
+        type="number"
+        value={localConfig.nmosRegisterPort || ''}
         onChange={handleInputChange}
         variant="outlined"
       />
