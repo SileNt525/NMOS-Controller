@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field # 新增 Field
 import requests
+import uuid # For generating unique IDs for self-registration
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import websocket
@@ -28,6 +29,12 @@ registry_url: Optional[str] = None
 ws_connection: Optional[websocket.WebSocketApp] = None
 ws_thread: Optional[threading.Thread] = None
 
+# Globals for self-registration
+self_node_id: Optional[str] = None
+self_node_heartbeat_thread: Optional[threading.Thread] = None
+self_node_heartbeat_stop_event = threading.Event()
+REGISTRATION_API_URL: Optional[str] = None # To store the base URL for registration API
+
 # --- Pydantic Models for API Responses ---
 class ResourceModel(BaseModel): # 基础的NMOS资源模型 (可以更具体)
     id: str
@@ -42,6 +49,11 @@ class ResourcesResponse(BaseModel):
     receivers: List[Dict[str, Any]]
     sources: List[Dict[str, Any]]
     flows: List[Dict[str, Any]]
+
+class SelfRegistrationStatus(BaseModel):
+    node_id: Optional[str] = None
+    status: str
+    detail: Optional[str] = None
 
 class CachedCounts(BaseModel):
     nodes: int
@@ -105,6 +117,137 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     if user is None:
         raise credentials_exception
     return user
+
+# --- NMOS Self-Registration and Discovery Functions --- 
+
+def fetch_initial_resources(query_api_base_url: str):
+    global nmos_resources, known_resource_ids
+    logger.info(f"Fetching initial resources from {query_api_base_url}")
+    resource_types_to_fetch = ["nodes", "devices", "senders", "receivers", "sources", "flows"]
+    # Clear existing resources before fetching new ones from a new registry
+    nmos_resources = {
+        "nodes": {}, "devices": {}, "senders": {},
+        "receivers": {}, "sources": {}, "flows": {}
+    }
+    known_resource_ids = {}
+    
+    processed_count = 0
+    summary = {res_type: 0 for res_type in resource_types_to_fetch}
+
+    for res_type in resource_types_to_fetch:
+        try:
+            url = f"{query_api_base_url}/{res_type}"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            resources_list = response.json()
+            if isinstance(resources_list, list):
+                for resource_data in resources_list:
+                    if process_resource_update(resource_data): # process_resource_update should exist elsewhere
+                        processed_count += 1
+                        summary[res_type] += 1
+            else:
+                logger.warning(f"Expected a list of resources for {res_type} from {url}, but got {type(resources_list)}")
+        except requests.RequestException as e:
+            logger.error(f"Error fetching {res_type} from {query_api_base_url}: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decoding JSON for {res_type} from {query_api_base_url}: {e}")
+    logger.info(f"Finished fetching initial resources. Processed {processed_count} resources. Summary: {summary}")
+    return DiscoverResponse(message="Initial resource discovery complete.", processed_resource_count=processed_count, resource_summary=summary)
+
+def register_self_node_resource(registration_api_base_url: str):
+    global self_node_id, self_node_heartbeat_thread, self_node_heartbeat_stop_event, REGISTRATION_API_URL
+    
+    REGISTRATION_API_URL = registration_api_base_url # Store for heartbeat
+
+    if self_node_heartbeat_thread and self_node_heartbeat_thread.is_alive():
+        logger.info("Stopping existing self-node heartbeat thread.")
+        self_node_heartbeat_stop_event.set()
+        self_node_heartbeat_thread.join(timeout=5)
+        if self_node_heartbeat_thread.is_alive():
+            logger.warning("Existing self-node heartbeat thread did not stop in time.")
+        self_node_heartbeat_thread = None
+    self_node_heartbeat_stop_event.clear()
+
+    self_node_id = str(uuid.uuid4())
+    # Determine host IP and port for the href. Fallback to localhost and a default/configurable port.
+    # Ensure MY_PORT is defined, e.g., the port this service runs on.
+    host_ip = os.getenv('HOST_IP', '127.0.0.1')
+    my_port = os.getenv('MY_PORT', '8000') # Assuming 8000 is the default for this service
+    node_href = f"http://{host_ip}:{my_port}/x-nmos/node/v1.3/self/" # Example self-referential href
+
+    node_resource = {
+        "id": self_node_id,
+        "version": f"{int(datetime.now().timestamp())}:0", 
+        "label": "NMOS Controller Application Node",
+        "description": "This node represents the NMOS Controller application itself.",
+        "href": node_href,
+        "hostname": f"nmos-controller-{self_node_id[:8]}",
+        "caps": {},
+        "services": [],
+        "clocks": [],
+        "interfaces": [] 
+    }
+    resource_payload = {
+        "type": "node",
+        "data": node_resource
+    }
+    registration_url = f"{registration_api_base_url}/resource"
+    try:
+        logger.info(f"Attempting to register self as node: {self_node_id} at {registration_url} with payload {json.dumps(resource_payload)}")
+        response = requests.post(registration_url, json=resource_payload, timeout=10)
+        response.raise_for_status()
+        registered_node = response.json()
+        logger.info(f"Successfully registered self as NMOS Node: {registered_node.get('id')}")
+        self_node_heartbeat_thread = threading.Thread(target=run_self_node_heartbeat, daemon=True)
+        self_node_heartbeat_thread.start()
+        return SelfRegistrationStatus(node_id=self_node_id, status="success", detail="Node registered and heartbeat started.")
+    except requests.RequestException as e:
+        logger.error(f"Failed to register self-node: {e}. Response: {e.response.text if e.response else 'No response'}")
+        self_node_id = None 
+        return SelfRegistrationStatus(node_id=None, status="error", detail=str(e))
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode registration response: {e}")
+        self_node_id = None
+        return SelfRegistrationStatus(node_id=None, status="error", detail=f"JSON decode error: {str(e)}")
+
+def run_self_node_heartbeat():
+    global self_node_id, self_node_heartbeat_stop_event, REGISTRATION_API_URL
+    if not self_node_id or not REGISTRATION_API_URL:
+        logger.error("Cannot start self-node heartbeat: node_id or registration_api_url not set.")
+        return
+
+    heartbeat_url = f"{REGISTRATION_API_URL}/health/nodes/{self_node_id}"
+    logger.info(f"Starting self-node heartbeat for {self_node_id} to {heartbeat_url}")
+    # IS-04 recommends heartbeat interval of 5 seconds for registration API.
+    # The wait timeout for the event should be the heartbeat interval.
+    while not self_node_heartbeat_stop_event.wait(5.0):
+        try:
+            response = requests.post(heartbeat_url, timeout=2) # Short timeout for the POST itself
+            if response.status_code == 200:
+                logger.debug(f"Heartbeat successful for node {self_node_id}. Response: {response.json()}")
+            elif response.status_code == 404:
+                logger.warning(f"Node {self_node_id} not found during heartbeat (404). Attempting re-registration.")
+                # Simple re-registration attempt. Could be more sophisticated.
+                self_node_heartbeat_stop_event.set() # Stop current heartbeat attempt
+                logger.info("Attempting to re-register node...")
+                # Ensure REGISTRATION_API_URL is still valid and available
+                rereg_status = register_self_node_resource(REGISTRATION_API_URL) 
+                if rereg_status.status == "success":
+                    logger.info("Successfully re-registered node after 404 on heartbeat.")
+                    # The new register_self_node_resource call will start a new heartbeat thread if successful.
+                    # So, this current thread should exit.
+                    break # Exit this loop, new heartbeat thread is running
+                else:
+                    logger.error(f"Failed to re-register node after 404. Stopping heartbeat. Detail: {rereg_status.detail}")
+                    break # Exit this loop, re-registration failed
+            else:
+                logger.warning(f"Heartbeat for node {self_node_id} failed with status {response.status_code}: {response.text}")
+        except requests.RequestException as e:
+            logger.error(f"Heartbeat request for node {self_node_id} failed: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error in heartbeat thread: {e}", exc_info=True)
+    logger.info(f"Self-node heartbeat thread for {self_node_id} stopped.")
+
 
 
 # --- Helper Functions (与之前相同，为简洁省略，但它们应该在这里) ---
@@ -272,19 +415,80 @@ def on_close(ws, close_status_code, close_msg):
         threading.Timer(5.0, start_websocket_subscription).start()
 
 def on_open(ws):
-    logger.info("WebSocket连接已建立")
+    logger.info("WebSocket connection opened.")
+    # Subscribe to all resources, or specific types as needed
+    # Example: subscribe to all changes in the 'resource' path (IS-04 v1.3 default)
+    subscription_request = {
+        "id": str(uuid.uuid4()), # Unique ID for the subscription
+        "type": "subscription",
+        "resource_path": "/", # Subscribe to all top-level resource types
+        "params": {"grain_rate": {"numerator": 0, "denominator": 1}} # No updates unless changed
+    }
+    try:
+        ws.send(json.dumps(subscription_request))
+        logger.info(f"Sent subscription request: {subscription_request}")
+    except Exception as e:
+        logger.error(f"Error sending subscription request on WebSocket open: {e}")
 
 # --- API Endpoints ---
 @app.post("/configure", response_model=ConfigureResponse)
 async def configure_registry(config: RegistryConfig, current_user_data: dict = Depends(get_current_user)):
-    global registry_url
-    old_url = registry_url
-    registry_url = f"http://{config.registry_address}:{config.registry_port}"
-    logger.info(f"NMOS注册中心已配置为: {registry_url}")
-    if old_url != registry_url or (ws_thread is None or not ws_thread.is_alive()):
-        logger.info("检测到 registry_url 更改或 WebSocket 未运行，正在尝试（重新）启动 WebSocket。")
-        start_websocket_subscription()
-    return ConfigureResponse(message="注册中心配置成功", url=registry_url)
+    global registry_url, ws_connection, ws_thread, self_node_heartbeat_thread, self_node_heartbeat_stop_event, nmos_resources, known_resource_ids, REGISTRATION_API_URL
+
+    base_nmos_url = f"http://{config.registry_address}:{config.registry_port}"
+    new_query_api_url = f"{base_nmos_url}/x-nmos/query/v1.3" 
+    new_registration_api_url = f"{base_nmos_url}/x-nmos/registration/v1.3"
+
+    logger.info(f"Received configuration for NMOS Registry: {config.registry_address}:{config.registry_port}")
+    logger.info(f"Derived Query API URL: {new_query_api_url}")
+    logger.info(f"Derived Registration API URL: {new_registration_api_url}")
+
+    # 1. Stop existing self-node heartbeat (if running)
+    if self_node_heartbeat_thread and self_node_heartbeat_thread.is_alive():
+        logger.info("Stopping existing self-node heartbeat thread due to new configuration.")
+        self_node_heartbeat_stop_event.set()
+        self_node_heartbeat_thread.join(timeout=5)
+        if self_node_heartbeat_thread.is_alive():
+            logger.warning("Existing self-node heartbeat thread did not stop in time.")
+        self_node_heartbeat_thread = None 
+    self_node_heartbeat_stop_event.clear() 
+
+    # 2. Stop existing WebSocket subscription and clear old resources
+    if ws_thread and ws_thread.is_alive():
+        logger.info("Closing existing WebSocket connection due to new configuration.")
+        if ws_connection:
+            ws_connection.close() 
+        ws_thread.join(timeout=5)
+        if ws_thread.is_alive():
+            logger.warning("Existing WebSocket thread did not stop in time.")
+        ws_connection = None 
+        ws_thread = None 
+    
+    logger.info("Clearing previously cached NMOS resources.")
+    nmos_resources = { "nodes": {}, "devices": {}, "senders": {}, "receivers": {}, "sources": {}, "flows": {}}
+    known_resource_ids = {}
+
+    # 3. Set the new global registry_url (for Query API) and REGISTRATION_API_URL
+    registry_url = new_query_api_url 
+    REGISTRATION_API_URL = new_registration_api_url 
+    logger.info(f"Global NMOS Query API URL set to: {registry_url}")
+    logger.info(f"Global NMOS Registration API URL set to: {REGISTRATION_API_URL}")
+
+    # 4. Fetch initial resources from the new registry via HTTP Query API
+    logger.info("Fetching initial resources from the new registry...")
+    fetch_result = fetch_initial_resources(registry_url) 
+    logger.info(f"Initial resource fetch status: {fetch_result.message}")
+
+    # 5. Start WebSocket subscription to the new registry's Query API
+    logger.info("Starting WebSocket subscription to the new registry...")
+    start_websocket_subscription() 
+
+    # 6. Register this application instance as a Node to the new registry
+    logger.info("Registering self as a node to the new registry...")
+    registration_status = register_self_node_resource(new_registration_api_url) 
+    logger.info(f"Self-registration status: {registration_status.status} - {registration_status.detail}")
+
+    return ConfigureResponse(message=f"NMOS Registry configured. Query: {registry_url}. Self-Reg: {registration_status.status}. Initial Fetch: {fetch_result.processed_resource_count} resources.", url=registry_url)
 
 @app.post("/users/change-password", summary="Change user password")
 async def change_password(payload: UserPasswordChange, current_user_data: dict = Depends(get_current_user)):
