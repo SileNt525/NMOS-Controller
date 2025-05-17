@@ -23,16 +23,38 @@ const baseConfig = {
   timeout: 10000, // 10秒超时
 };
 
-// 为每个服务创建 Axios 实例
-const registryApiClient = axios.create({
-  ...baseConfig,
-  baseURL: REGISTRY_SERVICE_URL,
-});
+// 获取存储的JWT token
+const getAuthToken = () => {
+  return localStorage.getItem('nmos_jwt_token');
+};
 
-const connectionApiClient = axios.create({
-  ...baseConfig,
-  baseURL: CONNECTION_SERVICE_URL,
-});
+// 创建一个 Axios 实例，用于处理需要认证的请求
+const createApiClientWithAuth = (baseURL) => {
+  const instance = axios.create({
+    ...baseConfig,
+    baseURL,
+  });
+
+  // 添加请求拦截器，自动添加认证头
+  instance.interceptors.request.use(
+    (config) => {
+      const token = getAuthToken();
+      if (token) {
+        config.headers['Authorization'] = `Bearer ${token}`;
+      }
+      return config;
+    },
+    (error) => {
+      return Promise.reject(error);
+    }
+  );
+
+  return instance;
+};
+
+// 为每个服务创建 Axios 实例
+const registryApiClient = createApiClientWithAuth(REGISTRY_SERVICE_URL);
+const connectionApiClient = createApiClientWithAuth(CONNECTION_SERVICE_URL);
 
 // const eventApiClient = axios.create({
 //   ...baseConfig,
@@ -54,13 +76,58 @@ const audioMappingApiClient = axios.create({
 // 或者，我们需要在注册服务中实现更细致的 IS-04 路径。
 // 为简化，我们假设 /resources 返回所有内容。
 
+// 获取所有 NMOS 资源 (nodes, devices, senders, receivers, etc.)
 export const fetchAllNmosResources = async () => {
+  const resourceTypes = ['nodes', 'devices', 'sources', 'flows', 'senders', 'receivers'];
+  // 动态选择API版本路径，初始尝试使用v1.3
+  // 注意：这里的逻辑需要调整，因为后端 /discover 端点不直接代理 NMOS Query API 的 /x-nmos/query/vX.Y/resources/{type} 路径
+  // 而是通过 /discover 端点获取所有缓存资源。
+  // 因此，我们应该调用 registryApiClient.get('/discover') 或 registryApiClient.get('/resources')
+  // 根据后端 main.py 中的端点定义，获取缓存资源是 /resources 端点。
+  // 发现资源并更新缓存是 /discover 端点。
+  // 假设前端需要的是缓存的资源列表，调用 /resources。
+
   try {
-    // 该端点在 nmos_registry_service/main.py 中定义
     const response = await registryApiClient.get('/resources');
-    return response.data; // 期望格式: { nodes: [], devices: [], senders: [], ... }
+    const results = response.data; // response.data 应该是 ResourcesResponse 模型对应的对象
+    console.log('Fetched NMOS resources from backend /resources:', results);
+
+    // 后端已经做了版本适配，前端不再需要此逻辑
+    // 对获取到的资源进行版本适配
+    // for (const type in results) {
+    //   if (results[type] && Array.isArray(results[type])) {
+    //     results[type].forEach(resource => {
+    //       if (type === 'nodes') {
+    //         resource.attached_network_device = resource.attached_network_device || null;
+    //         resource.authorization = resource.authorization || false;
+    //       } else if (type === 'devices') {
+    //         resource.authorization = resource.authorization || false;
+    //       } else if (type === 'sources' || type === 'flows') {
+    //         resource.event_type = resource.event_type || null;
+    //       }
+    //     });
+    //   }
+    // }
+
+    // 对获取到的资源进行版本适配
+    for (const type in results) {
+      if (results[type] && Array.isArray(results[type])) {
+        results[type].forEach(resource => {
+          if (type === 'nodes') {
+            resource.attached_network_device = resource.attached_network_device || null;
+            resource.authorization = resource.authorization || false;
+          } else if (type === 'devices') {
+            resource.authorization = resource.authorization || false;
+          } else if (type === 'sources' || type === 'flows') {
+            resource.event_type = resource.event_type || null;
+          }
+        });
+      }
+    }
+  
+    return results; // 返回一个包含各类资源数组的对象
   } catch (error) {
-    console.error('获取所有NMOS资源失败:', error.response ? error.response.data : error.message);
+    console.error('获取 NMOS 资源失败:', error.response ? error.response.data : error.message);
     throw error;
   }
 };
@@ -71,50 +138,103 @@ export const fetchAllNmosResources = async () => {
 
 export const fetchNodes = async () => {
   try {
-    // 假设将来 registry_service 可能提供 /nodes 端点
-    // 当前实现：从 /resources 获取
+    // 从 /resources 获取所有资源，然后筛选出 nodes
     const allResources = await fetchAllNmosResources();
     return allResources.nodes || [];
   } catch (error) {
-    console.error('获取节点数据失败:', error);
+    console.error('获取节点数据失败:', error.response ? error.response.data : error.message);
     throw error;
   }
 };
 
 export const fetchDevices = async () => {
   try {
-    // 当前实现：从 /resources 获取
+    // 从 /resources 获取所有资源，然后筛选出 devices
     const allResources = await fetchAllNmosResources();
     return allResources.devices || [];
   } catch (error) {
-    console.error('获取设备数据失败:', error);
+    console.error('获取设备数据失败:', error.response ? error.response.data : error.message);
     throw error;
   }
 };
 
 export const fetchSenders = async () => {
   try {
-    // 当前实现：从 /resources 获取
+    // 从 /resources 获取所有资源，然后筛选出 senders
     const allResources = await fetchAllNmosResources();
     return allResources.senders || [];
   } catch (error) {
-    console.error('获取发送器数据失败:', error);
+    console.error('获取发送器数据失败:', error.response ? error.response.data : error.message);
     throw error;
   }
 };
 
 export const fetchReceivers = async () => {
   try {
-    // 当前实现：从 /resources 获取
+    // 从 /resources 获取所有资源，然后筛选出 receivers
     const allResources = await fetchAllNmosResources();
     return allResources.receivers || [];
   } catch (error) {
-    console.error('获取接收器数据失败:', error);
+    console.error('获取接收器数据失败:', error.response ? error.response.data : error.message);
     throw error;
   }
 };
 
 
+// 配置NMOS注册中心
+export const configureRegistry = async (address, port) => {
+  try {
+    const payload = {
+      registry_address: address,
+      registry_port: port
+    };
+    const response = await registryApiClient.post('/configure', payload);
+    // 更新 registryApiClient 的 baseURL 以使用新的地址和端口
+    const newBaseURL = `http://${address}:${port}/x-nmos/query/v1.3`;
+    registryApiClient.defaults.baseURL = newBaseURL;
+    console.log('已更新 registryApiClient 的 baseURL 为:', newBaseURL);
+    return response.data;
+  } catch (error) {
+    console.error('配置NMOS注册中心失败:', error.response ? error.response.data : error.message);
+    throw error;
+  }
+};
+
+// 登录并获取JWT token
+export const loginUser = async (username, password) => {
+  try {
+    // 注意：/token 端点需要 application/x-www-form-urlencoded 格式的数据
+    // Axios 可以通过 URLSearchParams 或 FormData 来发送这种格式
+    const params = new URLSearchParams();
+    params.append('username', username);
+    params.append('password', password);
+
+    // 直接使用 axios 实例，不带认证头，因为这是获取 token 的请求本身
+    const response = await axios.post(`${REGISTRY_SERVICE_URL}/token`, params, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      }
+    });
+    const token = response.data.access_token;
+    if (token) {
+      localStorage.setItem('nmos_jwt_token', token); // 存储 token
+      console.log('Login successful, token stored.');
+    }
+    return response.data; // 返回 token 和 token_type
+  } catch (error) {
+    console.error('Login failed:', error.response ? error.response.data : error.message);
+    // 清除可能存在的旧 token
+    localStorage.removeItem('nmos_jwt_token');
+    throw error;
+  }
+};
+
+// 登出 (清除本地存储的 token)
+export const logoutUser = () => {
+  localStorage.removeItem('nmos_jwt_token');
+  console.log('Logged out, token removed.');
+};
+ 
 // **连接管理服务 (NMOS Connection Management Service - IS-05 related)**
 
 // 执行IS-05连接管理 - 创建/更新单个连接

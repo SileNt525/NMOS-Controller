@@ -6,6 +6,7 @@ FROM python:3.11-slim
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE 1 # 防止 Python 写入 .pyc 文件到容器中
 ENV PYTHONUNBUFFERED 1     # 防止 Python 缓冲 stdout 和 stderr，使日志立即显示
+ENV PYTHONPATH /app
 
 # 设置工作目录
 WORKDIR /app

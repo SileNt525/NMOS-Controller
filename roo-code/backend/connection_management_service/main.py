@@ -1,10 +1,11 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends, status
 from pydantic import BaseModel
 import requests
 import json
 import logging
 import os
 from typing import List, Dict, Any # 新增 List, Dict, Any
+from . import nmos_registry_service # 导入注册服务，以便访问 get_current_user
 
 app = FastAPI(title="NMOS Connection Management Service (IS-05)")
 
@@ -91,6 +92,15 @@ def find_is05_control_href_for_device(device_resource: Dict[str, Any]) -> str | 
     if not found_hrefs:
         return None
 
+    # 检查设备版本以进行兼容性处理
+    device_version = device_resource.get("version", "")
+    if ":" in device_version:
+        logger.debug(f"设备 '{device_resource.get('id')}' 版本 v1.3 检测到")
+    else:
+        logger.debug(f"设备 '{device_resource.get('id')}' 版本 v1.2 或更旧版本检测到")
+        # 为 v1.2 版本添加缺失字段的默认值
+        device_resource.setdefault("authorization", False)
+
     # 优先选择版本号较高的 URN (简单地按字符串排序，如果版本号在末尾)
     # 例如 "v1.1" > "v1.0"
     # 对 ACCEPTABLE_IS05_CONTROL_URNS 进行反向排序，以优先检查较新的版本
@@ -104,7 +114,7 @@ def find_is05_control_href_for_device(device_resource: Dict[str, Any]) -> str | 
 
 
 @app.post("/connect", summary="Create or update a single connection (IS-05)")
-async def connect(request: ConnectionRequest):
+async def connect(request: ConnectionRequest, current_user_data: dict = Depends(nmos_registry_service.main.get_current_user)):
     """
     发起或更新单个连接请求，根据 IS-05 标准操作 Receiver 的 /staged 和 /active 端点。
     """
@@ -255,7 +265,7 @@ async def get_connection_status(receiver_id: str):
 
 
 @app.post("/bulk_connect", summary="Create or update multiple connections (IS-05 Bulk)")
-async def bulk_connect(request: BulkConnectionRequest):
+async def bulk_connect(request: BulkConnectionRequest, current_user_data: dict = Depends(nmos_registry_service.main.get_current_user)):
     logger.info(f"收到批量连接请求，包含 {len(request.connections)} 个连接。")
     results = []
     successful_connections = 0

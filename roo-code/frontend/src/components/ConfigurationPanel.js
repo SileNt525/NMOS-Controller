@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
+import { configureRegistry } from '../api';
 import { Box, Typography, TextField, Button, Divider, FormControlLabel, Checkbox, MenuItem, Select } from '@mui/material';
 
 const ConfigurationPanel = () => {
@@ -37,10 +38,25 @@ const ConfigurationPanel = () => {
     });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     dispatch({ type: 'UPDATE_CONFIG', payload: localConfig });
-    alert('配置已保存');
-    console.log('当前配置:', localConfig);
+    try {
+      if (localConfig.nmosRegisterAddress && localConfig.nmosRegisterPort) {
+        const response = await configureRegistry(localConfig.nmosRegisterAddress, localConfig.nmosRegisterPort);
+        if (response && response.success) {
+          alert('配置已保存，包括NMOS Register设置');
+        } else {
+          alert('配置已保存，但NMOS Register设置失败');
+        }
+        console.log('NMOS Register配置响应:', response);
+      } else {
+        alert('配置已保存');
+      }
+      console.log('当前配置:', localConfig);
+    } catch (error) {
+      alert('保存配置时出错: ' + error.message);
+      console.error('保存配置时出错:', error);
+    }
   };
 
   return (
@@ -58,7 +74,30 @@ const ConfigurationPanel = () => {
         margin="normal"
         label="API 端点"
         name="apiEndpoint"
-        value={config.apiEndpoint}
+        value={localConfig.apiEndpoint || ''}
+        onChange={handleInputChange}
+        variant="outlined"
+      />
+      
+      <Typography variant="h6" gutterBottom sx={{ mt: 3 }}>
+        NMOS Register 设置
+      </Typography>
+      <TextField
+        fullWidth
+        margin="normal"
+        label="NMOS Register 地址"
+        name="nmosRegisterAddress"
+        value={localConfig.nmosRegisterAddress || ''}
+        onChange={handleInputChange}
+        variant="outlined"
+      />
+      <TextField
+        fullWidth
+        margin="normal"
+        label="NMOS Register 端口号"
+        name="nmosRegisterPort"
+        type="number"
+        value={localConfig.nmosRegisterPort || ''}
         onChange={handleInputChange}
         variant="outlined"
       />
@@ -72,7 +111,7 @@ const ConfigurationPanel = () => {
         label="轮询间隔 (毫秒)"
         name="pollingInterval"
         type="number"
-        value={config.pollingInterval}
+        value={localConfig.pollingInterval || ''}
         onChange={handleInputChange}
         variant="outlined"
       />
@@ -83,7 +122,7 @@ const ConfigurationPanel = () => {
       <FormControlLabel
         control={
           <Checkbox
-            checked={config.enableNotifications}
+            checked={localConfig.enableNotifications || false}
             onChange={handleCheckboxChange}
             name="enableNotifications"
           />

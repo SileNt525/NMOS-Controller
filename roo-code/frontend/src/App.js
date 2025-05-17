@@ -9,9 +9,11 @@ import AudioMapping from './components/AudioMapping';
 import NetworkTopology from './components/NetworkTopology';
 import ConfigurationPanel from './components/ConfigurationPanel';
 import Login from './components/Login';
+import ChangePassword from './components/ChangePassword';
 import Navbar from './components/Navbar';
 import { Container, Box } from '@mui/material'; // Box 可能用于布局
 import WebSocketClient from './websocket'; // 新增导入
+import { fetchAllNmosResources } from './api'; // 导入 API 函数
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false); // 假设默认未登录
@@ -27,7 +29,7 @@ function App() {
       // 注意：这里的 action types (DEVICE_UPDATE, CONNECTION_UPDATE, ADD_EVENT)
       // 需要与你的 reducers 中定义的 action types 匹配。
       if (data.type === 'DEVICE_UPDATE') {
-        // 假设 devicesReducer 中有 'UPDATE_DEVICE' action type
+        console.log('Dispatching UPDATE_DEVICE for WebSocket message', data.payload);
         dispatch({ type: 'UPDATE_DEVICE', payload: data.payload });
       } else if (data.type === 'CONNECTION_UPDATE') {
         // 假设 connectionsReducer 中有 'UPDATE_CONNECTION' action type
@@ -50,10 +52,36 @@ function App() {
   const handleLogin = (status) => {
     setIsLoggedIn(status);
     if (status) {
-      // 用户登录成功后，可能需要获取初始数据
-      // 例如: dispatch(fetchInitialDevices());
-      // dispatch(fetchInitialConnections());
-      console.log("User logged in.");
+      console.log("User logged in. Fetching initial data...");
+      // 用户登录成功后，获取初始数据
+      // 假设我们有一个 fetchInitialData thunk action 或者多个独立的 fetch actions
+      // 例如，获取所有 NMOS 资源 (包括设备、发送器、接收器等)
+      // 这需要一个相应的 action creator (e.g., in a new actions/nmosActions.js or similar)
+      // For now, let's assume a generic action to fetch all resources for simplicity
+      // or specifically fetch devices if that's the primary need after login.
+      // import { fetchDevices } from './actions/devicesActions'; // Assuming you create this
+      // dispatch(fetchDevices()); 
+      // A more comprehensive approach might be:
+      // import { initializeApplicationData } from './actions/appActions'; // A thunk that fetches multiple types of data
+      // dispatch(initializeApplicationData());
+      
+      // 作为示例，我们直接调用 api.js 中的函数并 dispatch actions
+      // 这通常应该封装在 thunk action creators 中
+      dispatch({ type: 'FETCH_RESOURCES_REQUEST' }); // 假设有这样一个 action type
+      fetchAllNmosResources()
+        .then(data => {
+          // 分别 dispatch 更新不同资源的 action
+          // 例如，更新 devicesReducer, sendersReducer, receiversReducer 等
+          // 这里简化处理，假设有一个统一的 action 来更新所有资源
+          // 或者 devicesReducer 可以处理一个包含所有资源的 payload
+          dispatch({ type: 'FETCH_RESOURCES_SUCCESS', payload: data });
+          console.log('Initial NMOS resources fetched successfully:', data);
+        })
+        .catch(error => {
+          dispatch({ type: 'FETCH_RESOURCES_FAILURE', payload: error.message });
+          console.error('Failed to fetch initial NMOS resources:', error);
+        });
+
     } else {
       console.log("User logged out.");
       // 用户登出后，可能需要清理 Redux store 中的数据
@@ -95,6 +123,7 @@ function App() {
             <Route path="/audio-mapping" element={<AudioMapping />} />
             <Route path="/network-topology" element={<NetworkTopology />} />
             <Route path="/configuration" element={<ConfigurationPanel />} />
+            <Route path="/change-password" element={<ChangePassword />} />
             {/* 可以添加一个 404 页面 */}
             {/* <Route path="*" element={<NotFoundPage />} /> */}
           </Routes>
