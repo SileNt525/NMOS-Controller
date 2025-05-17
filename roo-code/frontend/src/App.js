@@ -5,10 +5,7 @@ import Dashboard from './components/Dashboard';
 import Devices from './components/Devices';
 import Connections from './components/Connections';
 import Events from './components/Events';
-<<<<<<< HEAD
 import NetworkTopology from './components/NetworkTopology';
-=======
->>>>>>> 9ff1e3e50b95a2e5b2062ca3b292d7fe98f2a67e
 import Settings from './components/Settings';
 import { fetchAllNmosResources, updateConnectionState } from './reducers/nmosReducer';
 import { addEvent } from './reducers/eventsReducer'; // Import addEvent action
@@ -86,10 +83,7 @@ function App() {
             <li><Link to="/">仪表盘</Link></li>
             <li><Link to="/devices">设备管理</Link></li>
             <li><Link to="/connections">连接管理</Link></li>
-<<<<<<< HEAD
             <li><Link to="/topology">网络拓扑</Link></li>
-=======
->>>>>>> 9ff1e3e50b95a2e5b2062ca3b292d7fe98f2a67e
             <li><Link to="/events">事件与规则</Link></li>
             <li><Link to="/settings">系统设置</Link></li>
           </ul>
