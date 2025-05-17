@@ -154,8 +154,12 @@ def fetch_initial_resources(query_api_base_url: str):
     for res_type in resource_types_to_fetch:
         try:
             url = f"{query_api_base_url}/{res_type}"
+            logger.debug(f"Fetching resources from URL: {url}")
             response = requests.get(url, timeout=10)
-            response.raise_for_status()
+            logger.debug(f"Response status code for {url}: {response.status_code}")
+            # Log first 500 chars of response for debugging, be careful with large responses in production
+            logger.debug(f"Response text (first 500 chars) for {url}: {response.text[:500]}")
+            response.raise_for_status() # Will raise an HTTPError if the HTTP request returned an unsuccessful status code
             resources_list = response.json()
             if isinstance(resources_list, list):
                 for resource_data in resources_list:
@@ -164,10 +168,12 @@ def fetch_initial_resources(query_api_base_url: str):
                         summary[res_type] += 1
             else:
                 logger.warning(f"Expected a list of resources for {res_type} from {url}, but got {type(resources_list)}")
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error fetching {res_type} from {url}: {e}. Response status: {e.response.status_code if e.response else 'N/A'}, Response text: {e.response.text if e.response else 'N/A'}")
         except requests.RequestException as e:
-            logger.error(f"Error fetching {res_type} from {query_api_base_url}: {e}")
+            logger.error(f"Request exception fetching {res_type} from {url}: {e}")
         except json.JSONDecodeError as e:
-            logger.error(f"Error decoding JSON for {res_type} from {query_api_base_url}: {e}")
+            logger.error(f"JSON decode error for {res_type} from {url}: {e}. Response text that failed to parse: {response.text if 'response' in locals() else 'Response object not available'}")
     logger.info(f"Finished fetching initial resources. Processed {processed_count} resources. Summary: {summary}")
     return DiscoverResponse(message="Initial resource discovery complete.", processed_resource_count=processed_count, resource_summary=summary)
 
@@ -211,21 +217,31 @@ def register_self_node_resource(registration_api_base_url: str):
     registration_url = f"{registration_api_base_url}/resource"
     try:
         logger.info(f"Attempting to register self as node: {self_node_id} at {registration_url} with payload {json.dumps(resource_payload)}")
+        logger.debug(f"Attempting to register self as node. URL: {registration_url}, Payload: {json.dumps(resource_payload)}")
         response = requests.post(registration_url, json=resource_payload, timeout=10)
+        logger.debug(f"Self-registration response status code: {response.status_code}")
+        logger.debug(f"Self-registration response text (first 500 chars): {response.text[:500]}")
         response.raise_for_status()
         registered_node = response.json()
         logger.info(f"Successfully registered self as NMOS Node: {registered_node.get('id')}")
         self_node_heartbeat_thread = threading.Thread(target=run_self_node_heartbeat, daemon=True)
         self_node_heartbeat_thread.start()
         return SelfRegistrationStatus(node_id=self_node_id, status="success", detail="Node registered and heartbeat started.")
-    except requests.RequestException as e:
-        logger.error(f"Failed to register self-node: {e}. Response: {e.response.text if e.response else 'No response'}")
+    except requests.exceptions.HTTPError as e:
+        error_detail = f"HTTP error during self-registration: {e}. Status: {e.response.status_code if e.response else 'N/A'}, Response: {e.response.text if e.response else 'N/A'}"
+        logger.error(error_detail)
         self_node_id = None 
-        return SelfRegistrationStatus(node_id=None, status="error", detail=str(e))
+        return SelfRegistrationStatus(node_id=None, status="error", detail=error_detail)
+    except requests.RequestException as e:
+        error_detail = f"Request exception during self-registration: {e}"
+        logger.error(error_detail)
+        self_node_id = None 
+        return SelfRegistrationStatus(node_id=None, status="error", detail=error_detail)
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to decode registration response: {e}")
+        error_detail = f"JSON decode error during self-registration: {e}. Response text: {response.text if 'response' in locals() else 'Response object not available'}"
+        logger.error(error_detail)
         self_node_id = None
-        return SelfRegistrationStatus(node_id=None, status="error", detail=f"JSON decode error: {str(e)}")
+        return SelfRegistrationStatus(node_id=None, status="error", detail=error_detail)
 
 def run_self_node_heartbeat():
     global self_node_id, self_node_heartbeat_stop_event, REGISTRATION_API_URL
@@ -239,7 +255,9 @@ def run_self_node_heartbeat():
     # The wait timeout for the event should be the heartbeat interval.
     while not self_node_heartbeat_stop_event.wait(5.0):
         try:
+            logger.debug(f"Sending heartbeat for node {self_node_id} to {heartbeat_url}")
             response = requests.post(heartbeat_url, timeout=2) # Short timeout for the POST itself
+            logger.debug(f"Heartbeat response status code: {response.status_code}, text: {response.text[:200]}")
             if response.status_code == 200:
                 logger.debug(f"Heartbeat successful for node {self_node_id}. Response: {response.json()}")
             elif response.status_code == 404:
@@ -259,8 +277,11 @@ def run_self_node_heartbeat():
                     break # Exit this loop, re-registration failed
             else:
                 logger.warning(f"Heartbeat for node {self_node_id} failed with status {response.status_code}: {response.text}")
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error during heartbeat for node {self_node_id}: {e}. Status: {e.response.status_code if e.response else 'N/A'}, Response: {e.response.text if e.response else 'N/A'}")
+            # If heartbeat fails due to HTTP error (e.g. 500 from registry), continue trying for a while
         except requests.RequestException as e:
-            logger.error(f"Heartbeat request for node {self_node_id} failed: {e}")
+            logger.error(f"Request exception during heartbeat for node {self_node_id}: {e}")
         except Exception as e:
             logger.error(f"Unexpected error in heartbeat thread: {e}", exc_info=True)
     logger.info(f"Self-node heartbeat thread for {self_node_id} stopped.")
@@ -450,6 +471,7 @@ def on_open(ws):
 # --- API Endpoints ---
 @app.post("/configure", response_model=ConfigureResponse)
 async def configure_registry(config: RegistryConfig, current_user_data: dict = Depends(get_current_user)):
+    logger.info(f"--- Initiating /configure endpoint with registry_address: {config.registry_address}, port: {config.registry_port} ---")
     global registry_url, ws_connection, ws_thread, self_node_heartbeat_thread, self_node_heartbeat_stop_event, nmos_resources, known_resource_ids, REGISTRATION_API_URL
 
     base_nmos_url = f"http://{config.registry_address}:{config.registry_port}"
@@ -489,12 +511,17 @@ async def configure_registry(config: RegistryConfig, current_user_data: dict = D
     registry_url = new_query_api_url 
     REGISTRATION_API_URL = new_registration_api_url 
     logger.info(f"Global NMOS Query API URL set to: {registry_url}")
+    logger.info(f"Global NMOS Query API URL set to: {registry_url}")
     logger.info(f"Global NMOS Registration API URL set to: {REGISTRATION_API_URL}")
+    logger.info(f"Self-node HOST_IP: {os.getenv('HOST_IP', '127.0.0.1')}, MY_PORT: {os.getenv('MY_PORT', '8000')}")
 
     # 4. Fetch initial resources from the new registry via HTTP Query API
     logger.info("Fetching initial resources from the new registry...")
     fetch_result = fetch_initial_resources(registry_url) 
-    logger.info(f"Initial resource fetch status: {fetch_result.message}")
+    logger.info(f"Initial resource fetch status: {fetch_result.message}, Processed: {fetch_result.processed_resource_count}, Summary: {fetch_result.resource_summary}")
+    if fetch_result.processed_resource_count == 0 and not any(fetch_result.resource_summary.values()): # Check if any resources were actually fetched
+        # This could indicate an issue if the registry is expected to have resources but none were found/processed
+        logger.warning("Initial resource fetch did not process any resources. This might be normal for an empty registry, or indicate an issue.")
 
     # 5. Start WebSocket subscription to the new registry's Query API
     logger.info("Starting WebSocket subscription to the new registry...")
@@ -505,7 +532,17 @@ async def configure_registry(config: RegistryConfig, current_user_data: dict = D
     registration_status = register_self_node_resource(new_registration_api_url) 
     logger.info(f"Self-registration status: {registration_status.status} - {registration_status.detail}")
 
-    return ConfigureResponse(message=f"NMOS Registry configured. Query: {registry_url}. Self-Reg: {registration_status.status}. Initial Fetch: {fetch_result.processed_resource_count} resources.", url=registry_url)
+    if registration_status.status == "error":
+        logger.error(f"Self-registration failed: {registration_status.detail}. Aborting further operations for this configure request.")
+        # Consider raising HTTPException here to inform frontend more directly
+        # For now, returning a message indicating partial success or failure
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"NMOS Registry configured for query, but self-registration failed: {registration_status.detail}"
+        )
+
+    logger.info(f"--- /configure endpoint completed successfully for {config.registry_address}:{config.registry_port} ---")
+    return ConfigureResponse(message=f"NMOS Registry configured. Query API: {registry_url}. Self-Registration: {registration_status.status}. Initial Fetch: {fetch_result.processed_resource_count} resources.", url=registry_url)
 
 @app.post("/users/change-password", summary="Change user password")
 async def change_password(payload: UserPasswordChange, current_user_data: dict = Depends(get_current_user)):
